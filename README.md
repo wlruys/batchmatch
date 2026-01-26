@@ -168,8 +168,8 @@ Some dev notes, and missing metrics, features, etc that I may add in the future 
     - Non-shifted versions of translation search to avoid copy overheads
 - Differentiable FFT-based translation estimation (with soft-argmax peak finding / thresholding) and pass-through gradients.
 
-## AI Usage Notice
+## AI / Generative Tooling Usage Notice
 
 The core methods and implementations in this repository were manually ported by me from earlier NumPy/OpenCV/CUDA research code into PyTorch. AI tools (Claude Code) were used to assist with refactoring, interface experimentation, and generating integration-test scaffolding.
-This repo was used as a testbed to gain experience and understand the usage of modern generative tooling.
+This repo was used as a testbed to gain experience and understand the usage of modern generative tooling, and see where limitations currently are.
 As a result, you'll notice that there's like three different vestigial ways to build registration pipelines in here, as a result. Sorry about that, the one used and documented in "register_cells.py" is the one I recommend using, but there are no plans to deprecate the others at this time.
