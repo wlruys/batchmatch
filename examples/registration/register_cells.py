@@ -135,9 +135,9 @@ def main() -> None:
         batch_size=4,
         progress_enabled=True,
         gradient=CDGradientConfig(
-            #eta=EtaConfig.from_mean(scale=0.2, norm=L2NormConfig()),
-            #normalize=NormalizeConfig(norm="l2", threshold=1e-3),
-        ),
+            eta=EtaConfig.from_mean(scale=0.2, norm=L2NormConfig()),
+            normalize=NormalizeConfig(norm="l2", threshold=1e-3),
+        ) if args.metric == "ngf" else CDGradientConfig(),
     )
     search = ExhaustiveWarpSearch(search_params, config)
    
