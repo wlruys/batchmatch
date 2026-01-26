@@ -41,7 +41,7 @@ def _auto_device(device_str: str) -> torch.device:
         return torch.device(device_str)
 
 def main() -> None:
-    img = ImageIO(grayscale=True).load("FISH.jpg")
+    img = ImageIO(grayscale=True).load("img/test.jpg")
     reference = build_image_td(img)
 
 

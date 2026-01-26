@@ -28,7 +28,7 @@ def _repo_root() -> Path:
 def _parse_args() -> argparse.Namespace:
     root = _repo_root()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, default=root / "FISH.jpg", help="Path to an input image.")
+    parser.add_argument("--image", type=Path, default=root / "img/test.jpg", help="Path to an input image.")
     parser.add_argument("--num-crops", type=int, default=8, help="Number of random crops to generate.")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for cropping.")
     parser.add_argument(

@@ -29,7 +29,7 @@ def _repo_root() -> Path:
 def _parse_args() -> argparse.Namespace:
     root = _repo_root()
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", type=Path, default=root / "FISH.jpg", help="Path to an input image.")
+    parser.add_argument("--image", type=Path, default=root / "img/test.jpg", help="Path to an input image.")
     parser.add_argument(
         "--output-dir",
         type=Path,
