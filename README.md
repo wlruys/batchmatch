@@ -168,7 +168,6 @@ Some dev notes, and missing metrics, features, etc that I may add in the future 
 
 ## AI Usage Notice
 
-Core methods and implementations were direct ports of earlier numpy, opencv, and CUDA research code scattered across different scripts to PyTorch. These were done manually by me.
-
-Claude Code was used to help with refactoring, integration test generation, and experimenting with building different interfaces to help modularize usage and configuration. I used the development of this repo as a testbed to gain experience and understand the usage of modern tools.
-As a result, you'll notice that there's like three different vestigial ways to build registration pipelines in here, as a result. Sorry about that.
+The core methods and implementations in this repository were manually ported by me from earlier NumPy/OpenCV/CUDA research code into PyTorch. AI tools (Claude Code) were used to assist with refactoring, interface experimentation, and generating integration-test scaffolding.
+This repo was used as a testbed to gain experience and understand the usage of modern generative tooling.
+As a result, you'll notice that there's like three different vestigial ways to build registration pipelines in here, as a result. Sorry about that, the one used and documented in "register_cells.py" is the one I recommend using, but there are no plans to deprecate the others at this time.
