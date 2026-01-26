@@ -1,0 +1,333 @@
+
+from __future__ import annotations
+
+import argparse
+import time
+from pathlib import Path
+
+import torch
+
+from batchmatch.base import ImageDetail, build_image_td
+from batchmatch.io import ImageIO, ProductIO
+from batchmatch.process.cells import CellSizeCfg
+from batchmatch.process.crop import RandomCropStage
+from batchmatch.process.pad import CenterPad
+from batchmatch.process.resize import ScaleResize, TargetResize, CellUnitResize
+from batchmatch.gradient import (
+    CDGradientConfig,
+    EtaConfig,
+    L2NormConfig,
+    NormalizeConfig,
+)
+from batchmatch.search import (
+    ExhaustiveSearchConfig,
+    AngleRange,
+    SearchParams,
+    build_product_pipeline,
+    MPIExhaustiveSearchConfig,
+    MPIExhaustiveWarpSearch,
+    is_cuda_aware_mpi,
+    InconsistentInputsError,
+    MPISearchError,
+)
+from batchmatch.search.config import ScaleRange
+from batchmatch.translate.config import (
+    GNGFTranslationConfig,
+    GPCTranslationConfig,
+    NCCTranslationConfig,
+)
+from batchmatch.view.config import CheckerboardSpec, EdgeOverlaySpec, OverlaySpec
+from batchmatch.view.display import show_comparison
+from batchmatch.warp import WarpPipelineConfig, build_warp_pipeline
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="Distributed MPI exhaustive warp search for cell registration"
+    )
+    parser.add_argument(
+        "--selection",
+        type=int,
+        default=7,
+        help="Cell selection number",
+    )
+    parser.add_argument(
+        "--output-dir",
+        type=Path,
+        default=Path("outputs") / "register_mpi",
+        help="Directory to write output figures",
+    )
+    parser.add_argument(
+        "--search-dim",
+        type=int,
+        default=1024,
+        help="Dimension to which images are resized for search",
+    )
+    parser.add_argument(
+        "--metric",
+        type=str,
+        default="gpc",
+        choices=["ncc", "ngf", "gpc"],
+        help="Similarity metric for registration",
+    )
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cpu",
+        help="Device for processing (auto|cpu|cuda|mps)",
+    )
+    parser.add_argument(
+        "--output-prefix",
+        type=str,
+        default="reg_cells_mpi",
+        help="Prefix for output files",
+    )
+    parser.add_argument(
+        "--show",
+        action="store_true",
+        help="Visualize the registration results (open matplotlib, rank 0 only)",
+    )
+    parser.add_argument(
+        "--batch-size",
+        type=int,
+        default=4,
+        help="Batch size for search",
+    )
+    parser.add_argument(
+        "--gpu-aware",
+        action="store_true",
+        help="Use GPU-aware MPI (requires CUDA-aware MPI implementation)",
+    )
+    parser.add_argument(
+        "--no-validate",
+        action="store_true",
+        help="Skip input consistency validation across ranks",
+    )
+    return parser.parse_args()
+
+
+def parse_image_from_selection(selection: int) -> tuple[Path, Path]:
+    base_path = Path("cells") / f"selection_{selection}"
+    moving_path = base_path / "fish_dapi.jpg"
+    sel = f"sel{selection}"
+    reference_path = base_path / f"xenium_region_2-{sel}-highres_wide.png"
+    return moving_path, reference_path
+
+
+def auto_device(device: str) -> torch.device:
+    if device != "auto":
+        return torch.device(device)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def str_to_translation_config(metric: str):
+    if metric == "ncc":
+        return NCCTranslationConfig()
+    elif metric == "ngf":
+        return GNGFTranslationConfig()
+    elif metric == "gpc":
+        return GPCTranslationConfig()
+    else:
+        raise ValueError(f"Unsupported metric: {metric}")
+
+
+def get_mpi_comm():
+    try:
+        from mpi4py import MPI
+        return MPI.COMM_WORLD
+    except ImportError:
+        return None
+
+
+def main() -> None:
+    args = parse_args()
+    comm = get_mpi_comm()
+
+    #TODO(wlr): If runnin multiple ranks on a single node, set different GPU devices per rank.
+
+    if comm is not None:
+        rank = comm.Get_rank()
+        world_size = comm.Get_size()
+    else:
+        rank = 0
+        world_size = 1
+
+    def log(msg: str):
+        if rank == 0:
+            print(msg)
+
+    log(f"Running with {world_size} MPI process(es)")
+
+    # Check for GPU-aware MPI
+    if args.gpu_aware:
+        if is_cuda_aware_mpi():
+            log("GPU-aware MPI detected and enabled")
+        else:
+            log("WARNING: GPU-aware MPI requested but not detected. Falling back to CPU transfer.")
+            log("  Set OMPI_MCA_opal_cuda_support=1 for OpenMPI with CUDA support")
+
+    if not args.no_validate:
+        log("Input consistency validation enabled")
+
+    moving_path, reference_path = parse_image_from_selection(args.selection)
+
+    img = ImageIO(grayscale=True).load(reference_path)
+    reference = build_image_td(img)
+    reference_base = reference.clone()
+
+    img = ImageIO(grayscale=True).load(moving_path)
+    moving = build_image_td(img)
+    moving_base = moving.clone()
+
+    log(f"Loaded selection {args.selection}")
+    log(f"Reference image: {reference_path}")
+    log(f"Moving image: {moving_path}")
+
+    cfg = CellSizeCfg(
+        radius_hint_px=14.0,
+        use_log=True,
+        blob_weight=0.4,
+        max_dim=1024,
+        morph_radius_px=3,
+        peak_rel_threshold=0.3,
+    )
+    moving, reference = CellUnitResize(cell_cfg=cfg)(moving, reference)
+    move_scale = (moving.W / moving_base.W, moving.H / moving_base.H)
+    ref_scale = (reference.W / reference_base.W, reference.H / reference_base.H)
+
+    log(f"Moving scale factors: W={move_scale[0]:.4f}, H={move_scale[1]:.4f}")
+    log(f"Reference scale factors: W={ref_scale[0]:.4f}, H={ref_scale[1]:.4f}")
+
+    resize_pipe = TargetResize(target_width=args.search_dim)
+    pad_pipe = CenterPad(
+        scale=2,
+        window_alpha=0.05,
+        pad_to_pow2=False,
+        outputs=["image", "box", "mask", "quad", "window"],
+    )
+    prepare_pipe = resize_pipe >> pad_pipe
+    reference_lowres, moving_lowres = prepare_pipe(reference, moving)
+
+    log(f"Low-res reference shape: {reference_lowres.image.shape}")
+    log(f"Low-res moving shape: {moving_lowres.image.shape}")
+
+    device = auto_device(args.device)
+    reference_lowres = reference_lowres.to(device)
+    moving_lowres = moving_lowres.to(device)
+
+    search_params = SearchParams(
+        scale_x=ScaleRange(min_scale=1.0, max_scale=1.3, step=0.01),
+        scale_y=ScaleRange(min_scale=1.0, max_scale=1.3, step=0.01),
+    )
+
+    config = ExhaustiveSearchConfig(
+        translation=str_to_translation_config(args.metric),
+        batch_size=args.batch_size,
+        progress_enabled=True,
+        gradient=CDGradientConfig(
+            eta=EtaConfig.from_mean(scale=0.2, norm=L2NormConfig()),
+            normalize=NormalizeConfig(norm="l2", threshold=1e-3),
+        ),
+    )
+
+    if comm is not None:
+        comm.Barrier()
+
+    start_t = time.perf_counter()
+
+    try:
+        mpi_config = MPIExhaustiveSearchConfig(
+            top_k=1,
+            comm=comm,
+            root=0,
+            progress_rank=0,
+            return_on_all_ranks=False,
+            validate_inputs=not args.no_validate,
+            gpu_aware_mpi=args.gpu_aware,
+        )
+        search = MPIExhaustiveWarpSearch(search_params, config, mpi_config)
+        result = search(reference_lowres, moving_lowres)
+    except InconsistentInputsError as e:
+        log(f"ERROR: Ranks have inconsistent inputs!")
+        log(f"  Mismatched ranks: {e.mismatched_ranks}")
+        log("  Ensure all ranks load the same data files.")
+        raise
+    except MPISearchError as e:
+        log(f"ERROR: Rank {e.failed_rank} failed during search")
+        log(f"  {e.error_type}: {e.error_message}")
+        raise
+
+    if comm is not None:
+        comm.Barrier()
+
+    end_t = time.perf_counter()
+
+    log(f"Search took {end_t - start_t:.2f} seconds with {world_size} process(es)")
+
+    if rank == 0 and result is not None:
+        print("\nEstimated transformation parameters:")
+        warp = result.warp
+        print(f"  angle: {warp.angle.item():.2f} degrees")
+        print(f"  scale_x: {warp.scale_x.item():.4f}")
+        print(f"  scale_y: {warp.scale_y.item():.4f}")
+
+        product_pipeline = build_product_pipeline(
+            result,
+            move_scale=move_scale,
+            ref_scale=ref_scale,
+            crop_mode="union",
+        )
+        product_pipeline = product_pipeline.to(device)
+        registered, reference_out, original_mov = product_pipeline(
+            moving_base.clone(),
+            reference_base.clone(),
+            moving_base.clone(),
+        )
+
+        if args.show:
+            show_comparison(
+                reference_out,
+                registered,
+                mode="overlay",
+                spec=OverlaySpec(),
+            )
+
+        out_dir = args.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        prefix = args.output_prefix
+
+        out_dir = out_dir / prefix / f"metric_{args.metric}_searchdim_{args.search_dim}"
+
+        moving_save = original_mov.clone()
+        reference_save = reference_out.clone()
+        registered_save = registered.clone()
+
+        checkerboard_spec = CheckerboardSpec(
+            tiles=(64, 64),
+            edge_overlay=EdgeOverlaySpec(
+                edge_source='mov',
+                edge_threshold=0.3,
+            )
+        )
+        overlay_spec = OverlaySpec(alpha=0.5)
+
+        ProductIO(out_dir).save(
+            moving=moving_save,
+            reference=reference_save,
+            registered=registered_save,
+            search_result=result,
+            overwrite=True,
+            save_checkerboard=True,
+            save_overlay=True,
+            checkerboard_spec=checkerboard_spec,
+            overlay_spec=overlay_spec,
+        )
+        print(f"\nSaved product images to: {out_dir}")
+
+
+if __name__ == "__main__":
+    main()
