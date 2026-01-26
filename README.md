@@ -5,7 +5,9 @@ Supports pixel-level translation estimation using FFT-based correlation methods,
 
 A while ago, as part of my PhD research, I implemented and compared various FFT-based image registration methods to evaluate their accuracy on aligning multimodal remote sensing images. That was a messy research code, with a fairly fragile and non-portable CUDA implementation of the core metrics. This exists as a more easily usable port of many common FFT-based template matching methods, along with some utilities for building registration pipelines. It is intended for research use and experimentation.
 
-Many parts are still missing or incomplete compared to how I would ideally like this to be (see "Known TODOs and Development Notes" at the end), but it is generally usable for basic translation and coarse affine registration tasks. 
+Many parts are still missing or incomplete compared to how I would ideally like this to be (see "Known TODOs and Development Notes" at the end), but it is generally usable for basic translation and **coarse** affine registration tasks. 
+
+Local refinement and less-rigid registration methods are not currently supported.
 
 ## Features
 
