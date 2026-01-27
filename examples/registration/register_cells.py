@@ -57,7 +57,7 @@ def _parse_args() -> argparse.Namespace:
         default=Path("outputs") / "register_cells",
         help="Directory to write output figures.",
     )
-    parser.add_argument("--search-dim", type=int, default=1024, help="Dimension to which images are resized for search.")
+    parser.add_argument("--search-dim", type=int, default=512, help="Dimension to which images are resized for search.")
     parser.add_argument("--metric", type=str, default="gpc", choices=["ncc", "ngf", "gpc"], help="Similarity metric for registration.")
     parser.add_argument("--device", type=str, default="auto", help="Device for processing (auto|cpu|cuda|mps).")
     parser.add_argument("--output-prefix", type=str, default="reg_cells", help="Prefix for output files.")
@@ -127,8 +127,8 @@ def main() -> None:
     
 
     search_params = SearchParams(
-        scale_x=ScaleRange(min_scale=1.0, max_scale=1.4, step=0.01),
-        scale_y=ScaleRange(min_scale=1.0, max_scale=1.4, step=0.01),
+        scale_x=ScaleRange(min_scale=0.9, max_scale=1.5, step=0.01),
+        scale_y=ScaleRange(min_scale=0.9, max_scale=1.5, step=0.01),
     )
     config = ExhaustiveSearchConfig(
         translation=_str_to_translation_config(args.metric),
