@@ -21,6 +21,8 @@ from batchmatch.io.utils import (
 
 Tensor = torch.Tensor
 
+_TIFF_EXTENSIONS = {".tif", ".tiff"}
+
 __all__ = [
     "ImageIO",
 ]
@@ -51,12 +53,20 @@ class ImageIO:
         grayscale: bool | object = _DEFAULT,
         dtype: Optional[torch.dtype] | object = _DEFAULT,
         device: Optional[torch.device] | object = _DEFAULT,
+        channel: int | str | None = None,
+        downsample: int = 1,
     ) -> Tensor:
         grayscale = self.grayscale if grayscale is _DEFAULT else bool(grayscale)
         dtype = self.dtype if dtype is _DEFAULT else dtype
         device = self.device if device is _DEFAULT else device
 
         p = pathify(path)
+
+        # Dispatch TIFF files to the dedicated loader
+        if p.suffix.lower() in _TIFF_EXTENSIONS:
+            return self._load_tiff(p, grayscale=grayscale, dtype=dtype, device=device,
+                                   channel=channel, downsample=downsample)
+
         img = read_image(str(p))
 
         if grayscale:
@@ -82,6 +92,31 @@ class ImageIO:
             img = img.to(device=device)
 
         return img
+
+    def _load_tiff(
+        self,
+        path: pathlib.Path,
+        *,
+        grayscale: bool,
+        dtype: Optional[torch.dtype],
+        device: Optional[torch.device],
+        channel: int | str | None,
+        downsample: int,
+    ) -> Tensor:
+        from batchmatch.io.tiff import load_tiff
+
+        tensor, _meta = load_tiff(path, channel=channel, downsample=downsample)
+
+        if grayscale and tensor.shape[1] > 1:
+            tensor = tensor.mean(dim=1, keepdim=True)
+
+        if dtype is not None and tensor.dtype != dtype:
+            tensor = tensor.to(dtype=dtype)
+
+        if device is not None:
+            tensor = tensor.to(device=device)
+
+        return tensor
 
     def save(
         self,

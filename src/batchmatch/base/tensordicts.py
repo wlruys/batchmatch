@@ -558,10 +558,22 @@ class ImageDetail(CacheTD):
             self.set(self.Keys.GRAD.I, w_gi)
         return w_gi
 
+    @property
+    def tiff_meta(self) -> "object | None":
+        """Optional TiffMeta attached during TIFF loading."""
+        return getattr(self, "_tiff_meta", None)
+
+    @tiff_meta.setter
+    def tiff_meta(self, meta: "object | None") -> None:
+        self._tiff_meta = meta
+
     @classmethod
-    def from_image(cls, image: Tensor) -> "ImageDetail":
+    def from_image(cls, image: Tensor, *, tiff_meta: "object | None" = None) -> "ImageDetail":
         image = to_bchw(image)
-        return cls({cls.Keys.IMAGE: image}, batch_size=image.shape[0:1])
+        detail = cls({cls.Keys.IMAGE: image}, batch_size=image.shape[0:1])
+        if tiff_meta is not None:
+            detail.tiff_meta = tiff_meta
+        return detail
     
     def add_warp_params(self,
         angle: Optional[Tensor] = None,
