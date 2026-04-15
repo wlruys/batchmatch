@@ -1,14 +1,35 @@
 """Canonical registration manifest + slim :class:`ProductIO`.
 
-``registration.json`` is the single source of truth. The manifest encodes
-the moving and reference :class:`SourceInfo` (with load parameters), the
-search-time :class:`ImageSpace` for each side, the three characteristic
-matrices of :class:`RegistrationTransform`, and a compact search summary.
-PNG previews and ``.pt`` debug blobs are optional artifacts.
+``registration.json`` v3 is the single source of truth.  The manifest
+stores each source **once**, the three characteristic matrices of
+:class:`RegistrationTransform`, and a compact search summary with no
+duplication.
 
-Export is handled by :func:`batchmatch.io.export.export_registered` and
-consumes a :class:`RegistrationTransform` or a manifest directly. This
-module no longer ships its own warp-and-save path.
+Manifest layout (v3)::
+
+    {
+      "schema": "batchmatch.registration",
+      "version": 3,
+      "sources": {
+        "moving":    { <SourceInfo — OME-first> },
+        "reference": { <SourceInfo — OME-first> }
+      },
+      "transform": {
+        "matrices": {
+          "ref_full_from_mov_full":    [[3×3]],
+          "ref_phys_from_mov_phys":    [[3×3]] | null,
+          "ref_search_from_mov_search": [[3×3]]
+        },
+        "search_spaces": {
+          "moving":    { pyramid_level, region_yxhw, … },
+          "reference": { … }
+        },
+        "search_summary": { … }
+      },
+      "artifacts": { … }
+    }
+
+Export is handled by :func:`batchmatch.io.export.export_registered`.
 """
 
 from __future__ import annotations
@@ -24,7 +45,7 @@ from batchmatch.base.tensordicts import ImageDetail
 from batchmatch.io.imagedetail import ImageDetailIO
 from batchmatch.io.images import ImageIO
 from batchmatch.io.schema import REGISTRATION_SCHEMA
-from batchmatch.io.space import ImageSpace, SpatialImage
+from batchmatch.io.space import SpatialImage
 from batchmatch.io.utils import (
     PathLike,
     assert_overwrite,
@@ -55,17 +76,6 @@ def _read_json(path: pathlib.Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _load_block(space: ImageSpace) -> dict[str, Any]:
-    return {
-        "pyramid_level": int(space.pyramid_level),
-        "region": space.region.to_list(),
-        "downsample": int(space.downsample),
-        "channel_selection": (
-            list(space.channel_selection) if space.channel_selection is not None else None
-        ),
-    }
-
-
 @dataclass(frozen=True)
 class ProductIO:
     """Read/write a registration manifest and its optional artifacts."""
@@ -84,11 +94,15 @@ class ProductIO:
     def manifest_path(self) -> pathlib.Path:
         return self.root / self.manifest_name
 
+    # ------------------------------------------------------------------
+    # Save
+    # ------------------------------------------------------------------
+
     def save(
         self,
         transform: "RegistrationTransform",
         *,
-        preview: Any = None,  # RegistrationPreview (avoid hard import cycle)
+        preview: Any = None,
         checkerboard: Optional[Tensor] = None,
         overlay: Optional[Tensor] = None,
         debug_details: Optional[dict[str, ImageDetail | SpatialImage]] = None,
@@ -130,31 +144,23 @@ class ProductIO:
                 det_paths[name] = dpath.name
             artifacts["debug_details"] = det_paths
 
-        mov_space = transform.moving
-        ref_space = transform.reference
-
-        manifest = REGISTRATION_SCHEMA.with_metadata(
+        manifest = REGISTRATION_SCHEMA.envelope(
             {
-                "moving": {
-                    "source": mov_space.source.to_dict(),
-                    "load": _load_block(mov_space),
-                },
-                "reference": {
-                    "source": ref_space.source.to_dict(),
-                    "load": _load_block(ref_space),
-                },
-                "search_inputs": {
-                    "moving_space": mov_space.to_dict(),
-                    "reference_space": ref_space.to_dict(),
+                "sources": {
+                    "moving": transform.moving.source.to_dict(),
+                    "reference": transform.reference.source.to_dict(),
                 },
                 "transform": transform.to_dict(),
-                "search_summary": dict(transform.search_summary),
                 "artifacts": artifacts,
             }
         )
 
         _write_json(self.manifest_path, manifest, overwrite=overwrite)
         return self.manifest_path
+
+    # ------------------------------------------------------------------
+    # Load
+    # ------------------------------------------------------------------
 
     def load_manifest(self) -> dict[str, Any]:
         raw = _read_json(self.manifest_path)
@@ -166,7 +172,7 @@ class ProductIO:
     def load_transform(self) -> "RegistrationTransform":
         from batchmatch.search.transform import RegistrationTransform
 
-        return RegistrationTransform.from_dict(self.load_manifest()["transform"])
+        return RegistrationTransform.from_manifest(self.load_manifest())
 
     def exists(self) -> bool:
         return self.manifest_path.exists()

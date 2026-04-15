@@ -11,10 +11,12 @@ from batchmatch.io.images import (
     ImageSource,
     RasterSource,
     SaveOptions,
+    TiffExportConfig,
     TiffSource,
     load_image,
     open_image,
     save_image,
+    save_tiff,
 )
 from batchmatch.io.space import (
     ImageSpace,
@@ -38,10 +40,12 @@ __all__ = [
     "ImageSource",
     "RasterSource",
     "SaveOptions",
+    "TiffExportConfig",
     "TiffSource",
     "load_image",
     "open_image",
     "save_image",
+    "save_tiff",
     # Tensor I/O
     "TensorIO",
     # TIFF metadata (re-exported for introspection)

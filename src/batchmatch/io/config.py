@@ -17,7 +17,7 @@ class IOConfig:
     grayscale: bool = True
     timestamp_output: bool = True
     save_images: bool = True
-    save_product_json: bool = True
+    save_manifest: bool = True
 
 
 @dataclass

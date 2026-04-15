@@ -292,35 +292,67 @@ class RegistrationTransform:
         return mat_inv(self.matrix_ref_full_from_mov_full)
 
     def to_dict(self) -> dict[str, Any]:
+        """Compact serialization — matrices, search spaces, summary.
+
+        Source metadata is **not** embedded here; it is stored once at
+        the manifest top level by :class:`ProductIO`.
+        """
         return {
-            "moving_space": self.moving.to_dict(),
-            "reference_space": self.reference.to_dict(),
-            "matrix_ref_search_from_mov_search": self.matrix_ref_search_from_mov_search.tolist(),
-            "matrix_ref_full_from_mov_full": self.matrix_ref_full_from_mov_full.tolist(),
-            "matrix_ref_phys_from_mov_phys": (
-                self.matrix_ref_phys_from_mov_phys.tolist()
-                if self.matrix_ref_phys_from_mov_phys is not None
-                else None
-            ),
+            "matrices": {
+                "ref_full_from_mov_full": self.matrix_ref_full_from_mov_full.tolist(),
+                "ref_phys_from_mov_phys": (
+                    self.matrix_ref_phys_from_mov_phys.tolist()
+                    if self.matrix_ref_phys_from_mov_phys is not None
+                    else None
+                ),
+                "ref_search_from_mov_search": self.matrix_ref_search_from_mov_search.tolist(),
+            },
+            "search_spaces": {
+                "moving": self.moving.to_dict(),
+                "reference": self.reference.to_dict(),
+            },
             "search_summary": dict(self.search_summary),
         }
 
     @classmethod
-    def from_dict(cls, data: dict[str, Any]) -> "RegistrationTransform":
-        moving = ImageSpace.from_dict(data["moving_space"])
-        reference = ImageSpace.from_dict(data["reference_space"])
-        phys = data.get("matrix_ref_phys_from_mov_phys")
+    def from_dict(
+        cls,
+        data: dict[str, Any],
+        *,
+        moving_source: "SourceInfo",
+        reference_source: "SourceInfo",
+    ) -> "RegistrationTransform":
+        """Reconstruct from the compact dict + external source metadata."""
+        mats = data["matrices"]
+        spaces = data["search_spaces"]
+        moving = ImageSpace.from_dict(spaces["moving"], source=moving_source)
+        reference = ImageSpace.from_dict(spaces["reference"], source=reference_source)
+        phys = mats.get("ref_phys_from_mov_phys")
         return cls(
             moving=moving,
             reference=reference,
             matrix_ref_search_from_mov_search=np.asarray(
-                data["matrix_ref_search_from_mov_search"], dtype=np.float64
+                mats["ref_search_from_mov_search"], dtype=np.float64
             ),
             matrix_ref_full_from_mov_full=np.asarray(
-                data["matrix_ref_full_from_mov_full"], dtype=np.float64
+                mats["ref_full_from_mov_full"], dtype=np.float64
             ),
             matrix_ref_phys_from_mov_phys=(
                 np.asarray(phys, dtype=np.float64) if phys is not None else None
             ),
             search_summary=dict(data.get("search_summary", {})),
+        )
+
+    @classmethod
+    def from_manifest(cls, manifest: dict[str, Any]) -> "RegistrationTransform":
+        """Reconstruct from a full registration manifest dict."""
+        from batchmatch.io.space import SourceInfo
+
+        sources = manifest["sources"]
+        mov_source = SourceInfo.from_dict(sources["moving"])
+        ref_source = SourceInfo.from_dict(sources["reference"])
+        return cls.from_dict(
+            manifest["transform"],
+            moving_source=mov_source,
+            reference_source=ref_source,
         )

@@ -1,4 +1,16 @@
 
+"""Distributed MPI exhaustive warp search for cell registration.
+
+Uses the SpatialImage → RegistrationTransform → ProductIO pipeline with
+MPI-distributed exhaustive search.
+
+Run (single process):
+    uv run examples/registration/register_mpi.py
+
+Run (4 MPI ranks):
+    mpirun -n 4 uv run examples/registration/register_mpi.py
+"""
+
 from __future__ import annotations
 
 import argparse
@@ -8,23 +20,25 @@ from pathlib import Path
 import torch
 
 from batchmatch import auto_device
-from batchmatch.base import ImageDetail, build_image_td
-from batchmatch.io import ImageIO, ProductIO
-from batchmatch.process.cells import CellSizeCfg
-from batchmatch.process.crop import RandomCropStage
-from batchmatch.process.pad import CenterPad
-from batchmatch.process.resize import ScaleResize, TargetResize, CellUnitResize
 from batchmatch.gradient import (
     CDGradientConfig,
     EtaConfig,
     L2NormConfig,
     NormalizeConfig,
 )
+from batchmatch.io import ProductIO, load_image
+from batchmatch.process.cells import CellSizeCfg
+from batchmatch.process.pad import CenterPad
+from batchmatch.process.resize import CellUnitResize, TargetResize
+from batchmatch.process.spatial_stages import (
+    SpatialCenterPad,
+    SpatialTargetResize,
+    SpatialUnitResize,
+)
 from batchmatch.search import (
     ExhaustiveSearchConfig,
     AngleRange,
     SearchParams,
-    build_product_pipeline,
     MPIExhaustiveSearchConfig,
     MPIExhaustiveWarpSearch,
     is_cuda_aware_mpi,
@@ -32,14 +46,16 @@ from batchmatch.search import (
     MPISearchError,
 )
 from batchmatch.search.config import ScaleRange
+from batchmatch.search.transform import RegistrationTransform
 from batchmatch.translate.config import (
     GNGFTranslationConfig,
     GPCTranslationConfig,
     NCCTranslationConfig,
 )
 from batchmatch.view.config import CheckerboardSpec, EdgeOverlaySpec, OverlaySpec
+from batchmatch.view.composite import render_checkerboard, render_overlay
 from batchmatch.view.display import show_comparison
-from batchmatch.warp import WarpPipelineConfig, build_warp_pipeline
+from batchmatch.view.preview import render_registration_preview
 
 
 def parse_args():
@@ -166,11 +182,8 @@ def main() -> None:
 
     moving_path, reference_path = parse_image_from_selection(args.selection)
 
-    reference = ImageIO(grayscale=True).load(reference_path).detail
-    reference_base = reference.clone()
-
-    moving = ImageIO(grayscale=True).load(moving_path).detail
-    moving_base = moving.clone()
+    moving = load_image(moving_path, grayscale=True)
+    reference = load_image(reference_path, grayscale=True)
 
     log(f"Loaded selection {args.selection}")
     log(f"Reference image: {reference_path}")
@@ -184,29 +197,26 @@ def main() -> None:
         morph_radius_px=3,
         peak_rel_threshold=0.3,
     )
-    moving, reference = CellUnitResize(cell_cfg=cfg)(moving, reference)
-    move_scale = (moving.W / moving_base.W, moving.H / moving_base.H)
-    ref_scale = (reference.W / reference_base.W, reference.H / reference_base.H)
 
-    log(f"Moving scale factors: W={move_scale[0]:.4f}, H={move_scale[1]:.4f}")
-    log(f"Reference scale factors: W={ref_scale[0]:.4f}, H={ref_scale[1]:.4f}")
-
-    resize_pipe = TargetResize(target_width=args.search_dim)
-    pad_pipe = CenterPad(
-        scale=2,
-        window_alpha=0.05,
-        pad_to_pow2=False,
-        outputs=["image", "box", "mask", "quad", "window"],
+    unit = SpatialUnitResize(inner=CellUnitResize(cell_cfg=cfg))
+    resize = SpatialTargetResize(inner=TargetResize(target_width=args.search_dim))
+    pad = SpatialCenterPad(
+        inner=CenterPad(
+            scale=2,
+            window_alpha=0.05,
+            pad_to_pow2=False,
+            outputs=["image", "box", "mask", "quad", "window"],
+        )
     )
-    prepare_pipe = resize_pipe >> pad_pipe
-    reference_lowres, moving_lowres = prepare_pipe(reference, moving)
+    prepare = unit >> resize >> pad
 
-    log(f"Low-res reference shape: {reference_lowres.image.shape}")
-    log(f"Low-res moving shape: {moving_lowres.image.shape}")
+    moving_search, reference_search = prepare([moving.clone(), reference.clone()])
+
+    log(f"Search image shape: {tuple(reference_search.detail.image.shape)}")
 
     device = auto_device(args.device)
-    reference_lowres = reference_lowres.to(device)
-    moving_lowres = moving_lowres.to(device)
+    reference_search = reference_search.to(device)
+    moving_search = moving_search.to(device)
 
     search_params = SearchParams(
         scale_x=ScaleRange(min_scale=1.0, max_scale=1.3, step=0.01),
@@ -239,7 +249,7 @@ def main() -> None:
             gpu_aware_mpi=args.gpu_aware,
         )
         search = MPIExhaustiveWarpSearch(search_params, config, mpi_config)
-        result = search(reference_lowres, moving_lowres)
+        result = search(reference_search.detail, moving_search.detail)
     except InconsistentInputsError as e:
         log(f"ERROR: Ranks have inconsistent inputs!")
         log(f"  Mismatched ranks: {e.mismatched_ranks}")
@@ -264,36 +274,22 @@ def main() -> None:
         print(f"  scale_x: {warp.scale_x.item():.4f}")
         print(f"  scale_y: {warp.scale_y.item():.4f}")
 
-        product_pipeline = build_product_pipeline(
-            result,
-            move_scale=move_scale,
-            ref_scale=ref_scale,
+        moving_search_cpu = moving_search.to("cpu")
+        reference_search_cpu = reference_search.to("cpu")
+        result_cpu = result.to("cpu")
+
+        transform = RegistrationTransform.from_search(
+            moving=moving_search_cpu,
+            reference=reference_search_cpu,
+            search_result=result_cpu,
+        )
+
+        preview = render_registration_preview(
+            transform,
+            moving.to("cpu"),
+            reference.to("cpu"),
             crop_mode="union",
         )
-        product_pipeline = product_pipeline.to(device)
-        registered, reference_out, original_mov = product_pipeline(
-            moving_base.clone(),
-            reference_base.clone(),
-            moving_base.clone(),
-        )
-
-        if args.show:
-            show_comparison(
-                reference_out,
-                registered,
-                mode="overlay",
-                spec=OverlaySpec(),
-            )
-
-        out_dir = args.output_dir
-        out_dir.mkdir(parents=True, exist_ok=True)
-        prefix = args.output_prefix
-
-        out_dir = out_dir / prefix / f"metric_{args.metric}_searchdim_{args.search_dim}"
-
-        moving_save = original_mov.clone()
-        reference_save = reference_out.clone()
-        registered_save = registered.clone()
 
         checkerboard_spec = CheckerboardSpec(
             tiles=(64, 64),
@@ -303,19 +299,33 @@ def main() -> None:
             )
         )
         overlay_spec = OverlaySpec(alpha=0.5)
+        checkerboard = render_checkerboard(preview.reference, preview.moving_warped, checkerboard_spec)
+        overlay = render_overlay(preview.reference, preview.moving_warped, overlay_spec)
 
-        ProductIO(out_dir).save(
-            moving=moving_save,
-            reference=reference_save,
-            registered=registered_save,
-            search_result=result,
+        if args.show:
+            show_comparison(
+                preview.reference,
+                preview.moving_warped,
+                mode="overlay",
+                spec=overlay_spec,
+            )
+
+        out_dir = args.output_dir
+        out_dir.mkdir(parents=True, exist_ok=True)
+        prefix = args.output_prefix
+
+        out_dir = out_dir / prefix / f"metric_{args.metric}_searchdim_{args.search_dim}"
+
+        store = ProductIO(out_dir)
+        manifest_path = store.save(
+            transform,
+            preview=preview,
+            checkerboard=checkerboard,
+            overlay=overlay,
+            debug_details={"search_result": result_cpu},
             overwrite=True,
-            save_checkerboard=True,
-            save_overlay=True,
-            checkerboard_spec=checkerboard_spec,
-            overlay_spec=overlay_spec,
         )
-        print(f"\nSaved product images to: {out_dir}")
+        print(f"\nmanifest: {manifest_path}")
 
 
 if __name__ == "__main__":

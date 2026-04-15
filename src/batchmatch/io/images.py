@@ -72,10 +72,12 @@ __all__ = [
     "ImageSource",
     "RasterSource",
     "SaveOptions",
+    "TiffExportConfig",
     "TiffSource",
     "load_image",
     "open_image",
     "save_image",
+    "save_tiff",
 ]
 
 _TIFF_EXTENSIONS = frozenset({".tif", ".tiff"})
@@ -145,6 +147,85 @@ class SaveOptions:
     convert_uint8: Optional[bool] = None  # None = auto: raster yes, TIFF no
     tiff_compression: Optional[str] = None
     tiff_photometric: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class TiffExportConfig:
+    """Configuration for TIFF export conventions.
+
+    Controls the output format, channel interpretation, metadata
+    embedding, and dtype handling when writing TIFF files.
+
+    Parameters
+    ----------
+    format : ``"auto"`` | ``"ome-tiff"`` | ``"imagej-tiff"`` | ``"tiff"``
+        Output TIFF variant.  ``"auto"`` (default) preserves the source
+        format when a :class:`SourceInfo` is available, otherwise falls
+        back to ``"ome-tiff"``.
+    photometric : ``"auto"`` | ``"minisblack"`` | ``"rgb"``
+        How channels are interpreted.  ``"auto"`` selects ``"minisblack"``
+        for single-channel or ImageJ multi-channel images and ``"rgb"``
+        for 3-channel non-ImageJ images.
+    compression : str or None
+        tifffile compression codec (e.g. ``"zlib"``, ``"lzw"``,
+        ``"zstd"``).  ``None`` means uncompressed.
+    pyramid_levels : int
+        Number of sub-resolution pyramid levels to generate (each is a
+        2× downsample of the previous).  ``0`` (default) writes a single
+        resolution.  Pyramids are only supported with ``"ome-tiff"``
+        format; the setting is silently ignored for other formats.
+    convert_uint8 : bool
+        If ``True``, floating-point data is quantised to ``uint8`` before
+        writing.
+    overwrite : bool
+        Allow overwriting an existing file.
+    channel_names : tuple of str or None
+        Explicit channel names embedded in the file metadata.  ``None``
+        preserves names from the source or omits them.
+    metadata_from_source : bool
+        When ``True`` (default), pixel-size, unit, and calibration are
+        copied from the :class:`SourceInfo` passed at save time.
+    """
+
+    format: Literal["auto", "ome-tiff", "imagej-tiff", "tiff"] = "auto"
+    photometric: Literal["auto", "minisblack", "rgb"] = "auto"
+    compression: Optional[str] = None
+    pyramid_levels: int = 0
+    convert_uint8: bool = False
+    overwrite: bool = False
+    channel_names: Optional[tuple[str, ...]] = None
+    metadata_from_source: bool = True
+
+    def _resolve_format(self, source: Optional[SourceInfo]) -> str:
+        """Return the concrete TIFF format string."""
+        if self.format != "auto":
+            return self.format
+        if source is not None and source.format in ("ome-tiff", "imagej-tiff", "tiff"):
+            return source.format
+        return "ome-tiff"
+
+    def _resolve_photometric(self, fmt: str, ndim: int, channels: int) -> str:
+        """Return the concrete photometric string."""
+        if self.photometric != "auto":
+            return self.photometric
+        if ndim == 2:
+            return "minisblack"
+        # ImageJ hyperstack never uses RGB photometric
+        if fmt == "imagej-tiff":
+            return "minisblack"
+        if channels == 3:
+            return "rgb"
+        return "minisblack"
+
+    def _resolve_channel_names(
+        self, source: Optional[SourceInfo]
+    ) -> Optional[tuple[str, ...]]:
+        """Return channel names: explicit config → source → None."""
+        if self.channel_names is not None:
+            return self.channel_names
+        if self.metadata_from_source and source is not None and source.channel_names:
+            return source.channel_names
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -619,6 +700,51 @@ class ImageIO:
             _write_raster(chw, p, suffix, opts)
         return p
 
+    def save_tiff(
+        self,
+        image: Union[Tensor, SpatialImage, object],
+        path: PathLike,
+        *,
+        config: Optional[TiffExportConfig] = None,
+        source: Optional[SourceInfo] = None,
+    ) -> pathlib.Path:
+        """Write a TIFF file with explicit export configuration.
+
+        Parameters
+        ----------
+        image
+            Tensor, SpatialImage, or any image container.
+        path
+            Output file path (must end in ``.tif`` / ``.tiff``).
+        config
+            TIFF export settings.  Defaults to :class:`TiffExportConfig`
+            with all-auto resolution.
+        source
+            Optional source metadata for calibration / format context.
+            When *image* is a :class:`SpatialImage` and *source* is
+            ``None``, source metadata is taken from the image.
+        """
+        cfg = config if config is not None else TiffExportConfig()
+
+        p = pathify(path)
+        suffix = p.suffix.lower()
+        if suffix not in _TIFF_EXTENSIONS:
+            raise ValueError(
+                f"save_tiff() requires a .tif/.tiff path, got {suffix!r}.")
+        ensure_parent_dir(p)
+        assert_overwrite(p, cfg.overwrite)
+
+        if source is None and isinstance(image, SpatialImage):
+            source = image.space.source
+
+        img = to_bchw(_coerce_tensor(image)).detach()
+        if img.shape[0] != 1:
+            raise ValueError(f"save_tiff() requires batch size 1, got shape {tuple(img.shape)}.")
+        chw = img[0].contiguous().cpu()
+
+        _write_tiff_configured(chw, p, cfg, source=source)
+        return p
+
     def list(
         self,
         directory: PathLike,
@@ -683,6 +809,20 @@ def save_image(
     return ImageIO(save_options=opts).save(image, path)
 
 
+def save_tiff(
+    image: Union[Tensor, SpatialImage, object],
+    path: PathLike,
+    *,
+    config: Optional[TiffExportConfig] = None,
+    source: Optional[SourceInfo] = None,
+) -> pathlib.Path:
+    """Write a TIFF with explicit export configuration.
+
+    Convenience wrapper around ``ImageIO().save_tiff(...)``.
+    """
+    return ImageIO().save_tiff(image, path, config=config, source=source)
+
+
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
@@ -721,11 +861,64 @@ def _write_tiff(
     source: Optional[SourceInfo] = None,
     channel_names: Optional[tuple[str, ...]] = None,
 ) -> None:
+    """Legacy entry point — bridges SaveOptions into TiffExportConfig."""
+    fmt: Literal["auto", "ome-tiff", "imagej-tiff", "tiff"] = "auto"
+    if source is not None and source.format in ("ome-tiff", "imagej-tiff", "tiff"):
+        fmt = source.format  # type: ignore[assignment]
+    photo: Literal["auto", "minisblack", "rgb"] = "auto"
+    if opts.tiff_photometric is not None:
+        photo = opts.tiff_photometric  # type: ignore[assignment]
+    cfg = TiffExportConfig(
+        format=fmt,
+        photometric=photo,
+        compression=opts.tiff_compression,
+        convert_uint8=bool(opts.convert_uint8) if opts.convert_uint8 is not None else False,
+        channel_names=channel_names,
+        metadata_from_source=source is not None,
+    )
+    _write_tiff_configured(chw, path, cfg, source=source)
+
+
+def _build_pyramid_levels(
+    arr: np.ndarray,
+    n_levels: int,
+) -> list[np.ndarray]:
+    """Generate *n_levels* successive 2× area-downsampled copies of *arr*.
+
+    Works on both 2-D ``(H, W)`` and 3-D ``(C, H, W)`` arrays.
+    """
+    axes = "CYX" if arr.ndim == 3 else "YX"
+    levels: list[np.ndarray] = []
+    current = arr
+    for _ in range(n_levels):
+        y_ax = axes.find("Y")
+        x_ax = axes.find("X")
+        if current.shape[y_ax] < 2 or current.shape[x_ax] < 2:
+            break
+        down = area_downsample(current, axes, 2)
+        # area_downsample returns float32; cast back to source dtype
+        if down.dtype != arr.dtype:
+            if np.issubdtype(arr.dtype, np.integer):
+                down = np.round(down).astype(arr.dtype)
+            else:
+                down = down.astype(arr.dtype)
+        levels.append(down)
+        current = down
+    return levels
+
+
+def _write_tiff_configured(
+    chw: Tensor,
+    path: pathlib.Path,
+    cfg: TiffExportConfig,
+    *,
+    source: Optional[SourceInfo] = None,
+) -> None:
+    """Write a TIFF file using :class:`TiffExportConfig`."""
     img = chw
     if img.dtype == torch.bool:
         img = img.to(dtype=torch.uint8) * 255
-    convert = bool(opts.convert_uint8) if opts.convert_uint8 is not None else False
-    if convert and img.dtype != torch.uint8:
+    if cfg.convert_uint8 and img.dtype != torch.uint8:
         img = _to_uint8_chw(img)
 
     arr = img.numpy()
@@ -735,39 +928,42 @@ def _write_tiff(
     else:
         arr2d_or_cyx = arr
 
-    kwargs: dict = {}
-    if opts.tiff_compression is not None:
-        kwargs["compression"] = opts.tiff_compression
+    effective_source = source if cfg.metadata_from_source else None
+    fmt = cfg._resolve_format(effective_source)
+    photometric = cfg._resolve_photometric(fmt, arr2d_or_cyx.ndim, c)
+    channel_names = cfg._resolve_channel_names(effective_source)
+    resolution, resolutionunit = _tiff_resolution_from_source(effective_source)
 
-    if arr2d_or_cyx.ndim == 2:
-        photometric = opts.tiff_photometric or "minisblack"
-    elif opts.tiff_photometric is not None:
-        photometric = opts.tiff_photometric
-    elif c == 3:
-        photometric = "rgb"
-    else:
-        photometric = "minisblack"
+    kwargs: dict = {}
+    if cfg.compression is not None:
+        kwargs["compression"] = cfg.compression
     kwargs["photometric"] = photometric
 
-    fmt = source.format if source is not None else None
-    resolution, resolutionunit = _tiff_resolution_from_source(source)
-
     if fmt == "ome-tiff":
-        ome_metadata = _build_ome_metadata(source, channel_names, c)
+        ome_metadata = _build_ome_metadata(effective_source, channel_names, c)
         with tifffile.TiffWriter(str(path), ome=True) as tw:
             write_kwargs = dict(kwargs)
             if resolution is not None:
                 write_kwargs["resolution"] = resolution
                 write_kwargs["resolutionunit"] = resolutionunit
+            n_sub = cfg.pyramid_levels
+            if n_sub > 0:
+                write_kwargs["subifds"] = int(n_sub)
             tw.write(arr2d_or_cyx, metadata=ome_metadata, **write_kwargs)
+            if n_sub > 0:
+                for sub_arr in _build_pyramid_levels(arr2d_or_cyx, n_sub):
+                    tw.write(sub_arr, subfiletype=1, **kwargs)
         return
 
     if fmt == "imagej-tiff":
+        # ImageJ hyperstack stores multi-channel as separate grayscale planes.
+        if arr2d_or_cyx.ndim == 3:
+            kwargs["photometric"] = "minisblack"
         ij_metadata: dict = {"axes": "CYX" if arr2d_or_cyx.ndim == 3 else "YX"}
         if channel_names:
             ij_metadata["Labels"] = list(channel_names)
-        if source is not None and source.unit:
-            ij_metadata["unit"] = source.unit
+        if effective_source is not None and effective_source.unit:
+            ij_metadata["unit"] = effective_source.unit
         kwargs["metadata"] = ij_metadata
         kwargs["imagej"] = True
         if resolution is not None:
@@ -775,6 +971,7 @@ def _write_tiff(
         tifffile.imwrite(str(path), arr2d_or_cyx, **kwargs)
         return
 
+    # Plain TIFF fallback
     if arr2d_or_cyx.ndim == 3:
         kwargs.setdefault("metadata", {"axes": "CYX"})
     if resolution is not None:

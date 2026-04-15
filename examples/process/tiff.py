@@ -4,6 +4,7 @@ Run:
   uv run python examples/process/tiff.py
   uv run python examples/process/tiff.py --show
   uv run python examples/process/tiff.py --channel DAPI --channel FITC
+  uv run python examples/process/tiff.py --dpi 300 --figsize 20 20   # high-res output
 """
 
 from __future__ import annotations
@@ -49,6 +50,29 @@ def _parse_args() -> argparse.Namespace:
         help="Directory to write preview figures.",
     )
     parser.add_argument("--show", action="store_true", help="Show matplotlib windows (interactive).")
+    parser.add_argument("--dpi", type=int, default=110, help="DPI for saved figures (default: 110).")
+    parser.add_argument(
+        "--figsize",
+        type=float,
+        nargs=2,
+        metavar=("W", "H"),
+        default=None,
+        help="Figure size in inches as width height (default: auto).",
+    )
+    parser.add_argument(
+        "--per-image-size",
+        type=float,
+        nargs=2,
+        metavar=("W", "H"),
+        default=(3.5, 3.5),
+        help="Per-image size in inches for gallery views (default: 3.5 3.5).",
+    )
+    parser.add_argument(
+        "--max-display-size",
+        type=int,
+        default=None,
+        help="Max pixel extent for display; None keeps native resolution (default: None).",
+    )
     return parser.parse_args()
 
 
@@ -84,18 +108,18 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     handle = open_image(args.image)
-    meta = handle.meta
-    channels = [_parse_channel(token) for token in args.channel] if args.channel else _default_channels(meta.channel_names)
+    source = handle.source
+    channels = [_parse_channel(token) for token in args.channel] if args.channel else _default_channels(source.channel_names)
 
     print(f"TIFF: {args.image}")
-    print(f"  axes={meta.axes}")
-    print(f"  shape={meta.shape}")
-    print(f"  dtype={meta.dtype}")
-    print(f"  levels={meta.level_count}")
-    if meta.channel_names:
-        print(f"  channel_names={meta.channel_names}")
-    if meta.pixel_size_xy is not None:
-        print(f"  pixel_size_xy={meta.pixel_size_xy} {meta.unit or ''}".rstrip())
+    print(f"  axes={source.axes}")
+    print(f"  shape={source.base_shape_hw}")
+    print(f"  dtype={source.dtype}")
+    print(f"  levels={source.level_count}")
+    if source.channel_names:
+        print(f"  channel_names={list(source.channel_names)}")
+    if source.pixel_size_xy is not None:
+        print(f"  pixel_size_xy={source.pixel_size_xy} {source.unit or ''}".rstrip())
     if args.region is not None:
         print(f"  region={tuple(args.region)}")
     print(f"  downsample={args.downsample}")
@@ -112,17 +136,22 @@ def main() -> None:
         loaded_channels.append(loaded.detail.image.cpu())
         print(f"  loaded {_channel_label(channel)} -> shape={tuple(loaded.detail.image.shape)}")
 
+    image_spec = ImageViewSpec(normalize="minmax", colormap="magma", max_display_size=args.max_display_size)
+    figsize = tuple(args.figsize) if args.figsize else None
+
     show_images(
         loaded_channels,
         spec=GallerySpec(
             ncols=min(4, len(loaded_channels)),
-            per_image_size=(3.5, 3.5),
-            image_spec=ImageViewSpec(normalize="minmax", colormap="magma"),
+            per_image_size=tuple(args.per_image_size),
+            image_spec=image_spec,
         ),
         display=DisplaySpec(
             title="TIFF Channel Gallery",
             show=args.show,
             save_path=str(args.output_dir / "tiff_channel_gallery.png"),
+            dpi=args.dpi,
+            figsize=figsize,
         ),
     )
 
@@ -130,22 +159,26 @@ def main() -> None:
     if rgb is not None:
         show_image(
             rgb,
-            spec=ImageViewSpec(normalize="minmax"),
+            spec=ImageViewSpec(normalize="minmax", max_display_size=args.max_display_size),
             display=DisplaySpec(
                 title="TIFF RGB Composite",
                 show=args.show,
                 save_path=str(args.output_dir / "tiff_rgb_composite.png"),
+                dpi=args.dpi,
+                figsize=figsize,
             ),
         )
 
     first = loaded_channels[0]
     show_image(
         first,
-        spec=ImageViewSpec(normalize="minmax", colormap="gray"),
+        spec=ImageViewSpec(normalize="minmax", colormap="gray", max_display_size=args.max_display_size),
         display=DisplaySpec(
             title=f"TIFF Preview: {_channel_label(channels[0])}",
             show=args.show,
             save_path=str(args.output_dir / "tiff_single_channel.png"),
+            dpi=args.dpi,
+            figsize=figsize,
         ),
     )
 

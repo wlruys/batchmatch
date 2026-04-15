@@ -193,47 +193,64 @@ class SourceInfo:
         return self.pixel_size_xy is not None and self.origin_xy is not None
 
     def to_dict(self) -> dict:
+        cal = None
+        if self.pixel_size_xy is not None or self.origin_xy is not None:
+            cal = {
+                "pixel_size_xy": (
+                    list(self.pixel_size_xy) if self.pixel_size_xy is not None else None
+                ),
+                "unit": self.unit,
+                "origin_xy": (
+                    list(self.origin_xy) if self.origin_xy is not None else None
+                ),
+                "extent_xy": (
+                    list(self.physical_extent_xy)
+                    if self.physical_extent_xy is not None
+                    else None
+                ),
+            }
         return {
-            "source_path": self.source_path,
-            "series_index": int(self.series_index),
-            "level_count": int(self.level_count),
-            "level_shapes": [list(s) for s in self.level_shapes],
+            "path": self.source_path,
+            "format": self.format,
+            "series": int(self.series_index),
             "axes": self.axes,
             "dtype": self.dtype,
-            "channel_names": list(self.channel_names),
-            "pixel_size_xy": list(self.pixel_size_xy) if self.pixel_size_xy is not None else None,
-            "unit": self.unit,
-            "origin_xy": list(self.origin_xy) if self.origin_xy is not None else None,
-            "physical_extent_xy": (
-                list(self.physical_extent_xy) if self.physical_extent_xy is not None else None
-            ),
-            "format": self.format,
+            "channels": list(self.channel_names),
+            "pyramid": {
+                "levels": int(self.level_count),
+                "shapes_hw": [list(s) for s in self.level_shapes],
+            },
+            "calibration": cal,
         }
 
     @classmethod
     def from_dict(cls, data: dict) -> "SourceInfo":
+        pyr = data.get("pyramid", {})
+        cal = data.get("calibration") or {}
         return cls(
-            source_path=str(data["source_path"]),
-            series_index=int(data.get("series_index", 0)),
-            level_count=int(data.get("level_count", 1)),
-            level_shapes=tuple(tuple(int(v) for v in s) for s in data.get("level_shapes", [])),
+            source_path=str(data["path"]),
+            series_index=int(data.get("series", 0)),
+            level_count=int(pyr.get("levels", 1)),
+            level_shapes=tuple(
+                tuple(int(v) for v in s) for s in pyr.get("shapes_hw", [])
+            ),
             axes=str(data.get("axes", "")),
             dtype=str(data.get("dtype", "")),
-            channel_names=tuple(data.get("channel_names", []) or ()),
+            channel_names=tuple(data.get("channels", []) or ()),
             pixel_size_xy=(
-                tuple(float(v) for v in data["pixel_size_xy"])
-                if data.get("pixel_size_xy") is not None
+                tuple(float(v) for v in cal["pixel_size_xy"])
+                if cal.get("pixel_size_xy") is not None
                 else None
             ),
-            unit=data.get("unit"),
+            unit=cal.get("unit"),
             origin_xy=(
-                tuple(float(v) for v in data["origin_xy"])
-                if data.get("origin_xy") is not None
+                tuple(float(v) for v in cal["origin_xy"])
+                if cal.get("origin_xy") is not None
                 else None
             ),
             physical_extent_xy=(
-                tuple(float(v) for v in data["physical_extent_xy"])
-                if data.get("physical_extent_xy") is not None
+                tuple(float(v) for v in cal["extent_xy"])
+                if cal.get("extent_xy") is not None
                 else None
             ),
             format=str(data.get("format", "raster")),  # type: ignore[arg-type]
@@ -357,30 +374,35 @@ class ImageSpace:
         )
 
     def to_dict(self) -> dict:
+        """Serialize the geometric parameters (no source info).
+
+        Source metadata is stored once at the manifest top level; see
+        :meth:`ProductIO.save`.
+        """
         return {
-            "source": self.source.to_dict(),
             "pyramid_level": int(self.pyramid_level),
-            "region": self.region.to_list(),
+            "region_yxhw": self.region.to_list(),
             "downsample": int(self.downsample),
-            "shape_hw": [int(self.shape_hw[0]), int(self.shape_hw[1])],
-            "matrix_image_from_source": self.matrix_image_from_source.tolist(),
-            "channel_selection": (
+            "channels": (
                 list(self.channel_selection) if self.channel_selection is not None else None
             ),
+            "shape_hw": [int(self.shape_hw[0]), int(self.shape_hw[1])],
+            "matrix_image_from_source": self.matrix_image_from_source.tolist(),
         }
 
     @classmethod
-    def from_dict(cls, data: dict) -> "ImageSpace":
+    def from_dict(cls, data: dict, source: "SourceInfo") -> "ImageSpace":
+        """Reconstruct from a dict plus the owning :class:`SourceInfo`."""
         return cls(
-            source=SourceInfo.from_dict(data["source"]),
+            source=source,
             pyramid_level=int(data["pyramid_level"]),
-            region=RegionYXHW.from_list(data["region"]),
+            region=RegionYXHW.from_list(data["region_yxhw"]),
             downsample=int(data["downsample"]),
             shape_hw=(int(data["shape_hw"][0]), int(data["shape_hw"][1])),
             matrix_image_from_source=np.asarray(data["matrix_image_from_source"], dtype=np.float64),
             channel_selection=(
-                tuple(int(c) for c in data["channel_selection"])
-                if data.get("channel_selection") is not None
+                tuple(int(c) for c in data["channels"])
+                if data.get("channels") is not None
                 else None
             ),
         )

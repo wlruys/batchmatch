@@ -43,7 +43,7 @@ def _load_transform(
         manifest = json.loads(pathify(source).read_text(encoding="utf-8"))
     if manifest.get("schema") != REGISTRATION_SCHEMA.name:
         raise ValueError("export_registered expects a registration manifest.")
-    transform = RegistrationTransform.from_dict(manifest["transform"])
+    transform = RegistrationTransform.from_manifest(manifest)
     return transform, manifest
 
 

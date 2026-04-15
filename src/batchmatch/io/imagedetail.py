@@ -92,7 +92,7 @@ class ImageDetailIO:
 
         data = self._prune(data)
 
-        payload = IMAGEDETAIL_SCHEMA.with_metadata(
+        payload = IMAGEDETAIL_SCHEMA.envelope(
             {
                 "batch_size": list(detail.batch_size),
                 "data": data,
