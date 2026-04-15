@@ -22,8 +22,11 @@ from batchmatch.process.resize import (
 )
 from batchmatch.process.shift import (
     ShiftStage,
+    SubpixelShiftStage,
     build_shift_pipeline,
     build_shift_stage,
+    build_subpixel_shift_pipeline,
+    get_translation_offsets,
     shift_registry,
     shift_spatial_batch,
 )
@@ -34,6 +37,8 @@ from batchmatch.process.crop import (
     RandomCropStage,
     build_crop_stage,
     crop_registry,
+    invalidate_warp_computed,
+    _normalize_stage_outputs,
 )
 from batchmatch.process.builders import build_crop_stage_from_config
 from batchmatch.process.pad import (
@@ -68,8 +73,11 @@ __all__ = [
     "resize_registry",
     # Shift
     "ShiftStage",
+    "SubpixelShiftStage",
     "build_shift_pipeline",
     "build_shift_stage",
+    "build_subpixel_shift_pipeline",
+    "get_translation_offsets",
     "shift_registry",
     "shift_spatial_batch",
     # Crop
@@ -94,4 +102,5 @@ __all__ = [
     "build_window_pipeline",
     # Utilities
     "get_scales_between",
+    "invalidate_warp_computed",
 ]

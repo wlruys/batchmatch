@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Literal, Optional, Sequence, Tuple
+from typing import Any, Callable, Literal, Sequence
 
 import torch
 from torch import Tensor
@@ -41,8 +41,8 @@ class ApplySearchResultStage(Stage):
         result: ImageDetail,
         *,
         idx: int = 0,
-        move_scale: Tuple[float, float] | None = None,
-        ref_scale: Tuple[float, float] | None = None,
+        move_scale: tuple[float, float] | None = None,
+        ref_scale: tuple[float, float] | None = None,
         scale_translation: bool = True,
         scale_warp_translation: bool = True,
         scale_warp_scale: bool = True,
@@ -239,7 +239,7 @@ class ProductCropStage(Stage):
         self,
         *,
         mode: Literal["union", "intersection"] = "intersection",
-        combine_fn: Optional[Callable[[list[Tensor]], Tensor]] = None,
+        combine_fn: Callable[[list[Tensor]], Tensor] | None = None,
         crop_image: bool = True,
         crop_mask: bool = True,
         crop_window: bool = False,
@@ -250,14 +250,14 @@ class ProductCropStage(Stage):
         adjust_points: bool = False,
         clip_geometry: bool = True,
         invalidate_warp: bool = True,
-        image_key: Optional[NestedKey] = None,
-        mask_key: Optional[NestedKey] = None,
-        window_key: Optional[NestedKey] = None,
-        gx_key: Optional[NestedKey] = None,
-        gy_key: Optional[NestedKey] = None,
-        box_key: Optional[NestedKey] = None,
-        quad_key: Optional[NestedKey] = None,
-        points_key: Optional[NestedKey] = None,
+        image_key: NestedKey | None = None,
+        mask_key: NestedKey | None = None,
+        window_key: NestedKey | None = None,
+        gx_key: NestedKey | None = None,
+        gy_key: NestedKey | None = None,
+        box_key: NestedKey | None = None,
+        quad_key: NestedKey | None = None,
+        points_key: NestedKey | None = None,
     ) -> None:
         super().__init__()
         self._mode = mode
@@ -447,20 +447,25 @@ class ProductPipelineConfig:
     idx: int = 0
     scale_translation: bool = True
     scale_warp_translation: bool = True
-    pad_spec: Optional[object] = field(default_factory=lambda: {
+    pad_spec: object | None = field(default_factory=lambda: {
         "type": "center_pad",
         "scale": 2,
         "outputs": ["image", "box", "quad", "mask", "window"],
         "shrink_by": 0,
     })
-    warp_spec: Optional[object] = field(
+    warp_spec: object | None = field(
         default_factory=lambda: WarpPipelineConfig(outputs=["image", "mask"])
     )
     shift: bool = True
     shift_params: dict[str, Any] = field(
-        default_factory=lambda: {"source": "translation", "negate": True}
+        default_factory=lambda: {
+            "source": "translation",
+            "negate": True,
+            "shift_window": False,
+            "shift_points": False,
+        }
     )
-    crop_mode: Optional[Literal["union", "intersection"]] = None
+    crop_mode: Literal["union", "intersection"] | None = None
     crop_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def build(self, result: ImageDetail) -> Pipeline:
@@ -499,15 +504,15 @@ def build_product_pipeline(
     *,
     config: ProductPipelineConfig | None = None,
     idx: int = 0,
-    move_scale: Tuple[float, float] | None = None,
-    ref_scale: Tuple[float, float] | None = None,
+    move_scale: tuple[float, float] | None = None,
+    ref_scale: tuple[float, float] | None = None,
     scale_translation: bool = True,
     scale_warp_translation: bool = True,
     apply_pad: bool = True,
     apply_warp: bool = True,
     apply_shift: bool = True,
-    crop_mode: Optional[Literal["union", "intersection"]] = None,
-    crop_kwargs: Optional[dict[str, Any]] = None,
+    crop_mode: Literal["union", "intersection"] | None = None,
+    crop_kwargs: dict[str, Any] | None = None,
 ) -> Pipeline:
     """
     Example:
@@ -562,7 +567,12 @@ def build_product_pipeline(
         stages.append(ApplyToIndexStage(warp_pipeline, indices=0))
 
     if apply_shift:
-        shift_pipeline = build_subpixel_shift_pipeline(source="translation", negate=True)
+        shift_pipeline = build_subpixel_shift_pipeline(
+            source="translation",
+            negate=True,
+            shift_window=False,
+            shift_points=False,
+        )
         stages.append(ApplyToIndexStage(shift_pipeline, indices=0))
 
     if crop_mode is not None:

@@ -11,22 +11,10 @@ Tensor = torch.Tensor
 __all__ = ["NestedKey", "ImageDetail", "build_image_td", "validate_image_td_shape"]
 
 
-def build_image_td(image: Tensor, *, tiff_meta: object | None = None) -> ImageDetail:
-    """
-    Build an ImageDetail TensorDict from an image tensor.
-
-    Args:
-        image: Image tensor normalized to [B, C, H, W].
-        tiff_meta: Optional TiffMeta from TIFF loading (carries pixel size, channel names, etc.).
-
-    Returns:
-        ImageDetail wrapping the normalized image.
-    """
+def build_image_td(image: Tensor) -> ImageDetail:
+    """Build an ImageDetail TensorDict from a [B, C, H, W] image tensor."""
     image = to_bchw(image)
-    td = ImageDetail({ImageDetail.Keys.IMAGE: image}, batch_size=image.shape[0:1])
-    if tiff_meta is not None:
-        td.tiff_meta = tiff_meta
-    return td
+    return ImageDetail({ImageDetail.Keys.IMAGE: image}, batch_size=image.shape[0:1])
 
 
 def _check_bchw_like(val: Tensor, *, B: int, C: int, H: int, W: int, name: object) -> None:

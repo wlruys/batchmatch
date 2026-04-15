@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple, Union
+from typing import Any, Callable, Mapping
 
 import torch
 import torch.nn as nn
@@ -31,7 +31,7 @@ __all__ = [
 
 
 def _get_gradient_stage(
-    method: Union[str, Mapping, GradientPipelineConfig],
+    method: str | Mapping | GradientPipelineConfig,
     *,
     require_complex: bool = False,
     **kwargs,
@@ -53,7 +53,7 @@ def _get_translation_stage(method: str, **kwargs) -> Stage:
     return build_translation_stage(method, **kwargs)
 
 
-def _get_warp_stages(*, inverse: bool = True) -> List[Stage]:
+def _get_warp_stages(*, inverse: bool = True) -> list[Stage]:
     """Build warp stages: prepare + image + mask + window."""
     from batchmatch.warp.stages import (
         PrepareWarpStage,
@@ -73,7 +73,7 @@ def build_reference_pipeline(
     config: ExhaustiveSearchConfig,
     translation_stage: Stage,
 ) -> Pipeline:
-    stages: List[Stage] = []
+    stages: list[Stage] = []
 
     requires_gradients = getattr(translation_stage, "requires_gradients", False)
     requires_complex = getattr(translation_stage, "requires_complex_gradients", False)
@@ -102,7 +102,7 @@ def build_moving_pipeline(
     config: ExhaustiveSearchConfig,
     translation_stage: Stage,
 ) -> Pipeline:
-    stages: List[Stage] = []
+    stages: list[Stage] = []
 
     stages.extend(_get_warp_stages(inverse=True))
 
@@ -122,7 +122,7 @@ class ExhaustiveWarpSearch(nn.Module):
     def __init__(
         self,
         search_params: SearchParams,
-        config: Optional[ExhaustiveSearchConfig] = None,
+        config: ExhaustiveSearchConfig | None = None,
         *,
         world_size: int = 1,
         rank: int = 0,
@@ -153,29 +153,29 @@ class ExhaustiveWarpSearch(nn.Module):
         self._auto_batch_size = config.auto_batch_size
         self._max_auto_batch_size = config.max_auto_batch_size
 
-        self._warp_buffer: Optional[Tensor] = None
-        self._grid_buffer: Optional[Tensor] = None
-        self._m_fwd_buffer: Optional[Tensor] = None
-        self._m_inv_buffer: Optional[Tensor] = None
+        self._warp_buffer: Tensor | None = None
+        self._grid_buffer: Tensor | None = None
+        self._m_fwd_buffer: Tensor | None = None
+        self._m_inv_buffer: Tensor | None = None
 
-        self._moving_buffers: Dict[Any, Tensor] = {}
+        self._moving_buffers: dict[Any, Tensor] = {}
 
-        self._moving_batch: Optional[ImageDetail] = None
+        self._moving_batch: ImageDetail | None = None
         self._moving_batch_size: int = 0
         
-        self._original_image_expanded: Optional[Tensor] = None
-        self._original_mask_expanded: Optional[Tensor] = None
-        self._original_window_expanded: Optional[Tensor] = None
+        self._original_image_expanded: Tensor | None = None
+        self._original_mask_expanded: Tensor | None = None
+        self._original_window_expanded: Tensor | None = None
         
-        self._search_h: Optional[Tensor] = None
-        self._search_w: Optional[Tensor] = None
+        self._search_h: Tensor | None = None
+        self._search_w: Tensor | None = None
         self._search_dims_batch_size: int = 0
         
-        self._coord_xs: Optional[Tensor] = None
-        self._coord_ys: Optional[Tensor] = None
-        self._coord_shape: Tuple[int, int] = (0, 0)
+        self._coord_xs: Tensor | None = None
+        self._coord_ys: Tensor | None = None
+        self._coord_shape: tuple[int, int] = (0, 0)
         
-        self._cached_group_tables: Optional[Dict] = None
+        self._cached_group_tables: Dict | None = None
 
     def clear_cache(self) -> None:
         self._warp_buffer = None
@@ -266,7 +266,7 @@ class ExhaustiveWarpSearch(nn.Module):
         batch_size: int,
         cls: type[CacheTD],
     ) -> CacheTD:
-        data: Dict[str, Tensor] = {}
+        data: dict[str, Tensor] = {}
         for key, value in td.items():
             if isinstance(value, torch.Tensor) and value.shape[0] == 1:
                 value = value.expand(batch_size, *value.shape[1:])
@@ -415,7 +415,7 @@ class ExhaustiveWarpSearch(nn.Module):
 
         return moving
 
-    def _ensure_coord_vectors(self, H: int, W: int) -> Tuple[Tensor, Tensor]:
+    def _ensure_coord_vectors(self, H: int, W: int) -> tuple[Tensor, Tensor]:
         if self._coord_shape == (H, W) and self._coord_xs is not None:
             return self._coord_xs, self._coord_ys        
         self._coord_xs = torch.arange(W, device=self.device, dtype=self.dtype).view(1, 1, W)
@@ -472,7 +472,7 @@ class ExhaustiveWarpSearch(nn.Module):
 
     def _get_search_dims(
         self, reference: ImageDetail, batch_size: int
-    ) -> Tuple[Tensor, Tensor]:
+    ) -> tuple[Tensor, Tensor]:
         # Prefer box shape (content dimensions) over canvas H/W
         box = reference.box
         if box is not None and box.numel() >= 4:
@@ -677,8 +677,8 @@ class ExhaustiveWarpSearch(nn.Module):
     
     def _setup_progress(
         self,
-        progress: Union[bool, None],
-    ) -> Tuple[Any, Optional[ProgressTracker]]:
+        progress: bool | None,
+    ) -> tuple[Any, ProgressTracker | None]:
         """Setup progress tracking."""
         from contextlib import nullcontext
 
@@ -708,8 +708,8 @@ class ExhaustiveWarpSearch(nn.Module):
         moving: ImageDetail,
         *,
         top_k: int = 1,
-        progress: Union[bool, None] = None,
-        callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        progress: bool | None = None,
+        callback: Callable[[dict[str, Any]], None] | None = None,
         clone_inputs: bool = True,
     ) -> ImageDetail:
         if torch.compiler.is_compiling():
@@ -746,7 +746,7 @@ class ExhaustiveWarpSearch(nn.Module):
             self._init_moving_batch_container(moving_base, batch_size)
         progress_ctx, tracker = self._setup_progress(progress)
         iterator = self._create_iterator(batch_size)
-        global_best: Optional[ImageDetail] = None
+        global_best: ImageDetail | None = None
 
         with progress_ctx:
             for warp_params in iterator:
@@ -795,9 +795,9 @@ class ExhaustiveWarpSearch(nn.Module):
         self,
         *,
         fullgraph: bool = False,
-        dynamic: Optional[bool] = None,
-        backend: Optional[str] = None,
-        mode: Optional[str] = None,
+        dynamic: bool | None = None,
+        backend: str | None = None,
+        mode: str | None = None,
         **kwargs,
     ) -> "ExhaustiveWarpSearch":
         return compile_search(
@@ -810,7 +810,7 @@ class ExhaustiveWarpSearch(nn.Module):
         )
 
 
-def _get_compile_backend_for_device(device: torch.device) -> Optional[str]:
+def _get_compile_backend_for_device(device: torch.device) -> str | None:
     #TODO(wlr): Currently the full pipeline is SLOWER with compilation. idk why. Stages (like warp) are faster in isolation.
     # Need to profile more to see where the bottlenecks are.
     
@@ -823,15 +823,15 @@ def compile_search(
     search: "ExhaustiveWarpSearch",
     *,
     fullgraph: bool = False,
-    dynamic: Optional[bool] = None,
-    backend: Optional[str] = None,
-    mode: Optional[str] = None,
+    dynamic: bool | None = None,
+    backend: str | None = None,
+    mode: str | None = None,
     **kwargs,
 ) -> "ExhaustiveWarpSearch":
     if backend is None:
         backend = _get_compile_backend_for_device(search.device)
 
-    compile_kwargs: Dict[str, Any] = {
+    compile_kwargs: dict[str, Any] = {
         "fullgraph": fullgraph,
     }
     if dynamic is not None:

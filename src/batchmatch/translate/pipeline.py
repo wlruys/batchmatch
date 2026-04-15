@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Mapping, Optional, Union
+from typing import Any, Mapping
 
 try:
     from frozendict import frozendict
@@ -79,7 +79,7 @@ def coerce_translation_search_spec(
 
 
 def build_translation_stage(
-    spec: Union[TranslationSearchSpec, StageSpec, Mapping, str, "TranslationConfig"],
+    spec: TranslationSearchSpec | StageSpec | Mapping | str | "TranslationConfig",
     **kwargs,
 ) -> TranslationSearchStage:
     """Build a translation search stage from specification.

@@ -16,7 +16,25 @@ __all__ = [
     "render_detail_components",
     "render_batch_gallery",
     "render_tensor_gallery",
+    "render_channel_gallery",
 ]
+
+
+def _render_for_gallery(tensor: Tensor, spec: ImageViewSpec) -> Tensor:
+    """Select channels, downsample, normalize, and convert to RGB."""
+    tensor = render.select_channels(tensor, spec.channel)
+    tensor = render.downsample_for_display(tensor, spec.max_display_size)
+    rendered = render.prepare_for_display(
+        tensor,
+        spec.normalize,
+        spec.percentile_low,
+        spec.percentile_high,
+        spec.vmin,
+        spec.vmax,
+        spec.gamma,
+        spec.normalize_per_image,
+    )
+    return render.to_rgb(rendered)
 
 
 def create_image_grid(
@@ -79,18 +97,7 @@ def render_detail_gallery(
         if key not in detail:
             continue
         img = detail.get(key)
-        rendered = render.prepare_for_display(
-            img,
-            spec.image_spec.normalize,
-            spec.image_spec.percentile_low,
-            spec.image_spec.percentile_high,
-            spec.image_spec.vmin,
-            spec.image_spec.vmax,
-            spec.image_spec.gamma,
-            spec.image_spec.normalize_per_image,
-        )
-        rendered = render.to_rgb(rendered)
-        results.append(rendered)
+        results.append(_render_for_gallery(img, spec.image_spec))
     return results
 
 
@@ -104,21 +111,8 @@ def render_detail_components(
         if key not in detail:
             continue
         tensor = detail.get(key)
-
         spec = specs[i] if specs and i < len(specs) else ImageViewSpec()
-
-        rendered = render.prepare_for_display(
-            tensor,
-            spec.normalize,
-            spec.percentile_low,
-            spec.percentile_high,
-            spec.vmin,
-            spec.vmax,
-            spec.gamma,
-            spec.normalize_per_image,
-        )
-        rendered = render.to_rgb(rendered)
-        results.append(rendered)
+        results.append(_render_for_gallery(tensor, spec))
     return results
 
 
@@ -135,19 +129,7 @@ def render_batch_gallery(
 
     results = []
     for b in range(B):
-        img = tensor[b]
-        rendered = render.prepare_for_display(
-            img,
-            spec.image_spec.normalize,
-            spec.image_spec.percentile_low,
-            spec.image_spec.percentile_high,
-            spec.image_spec.vmin,
-            spec.image_spec.vmax,
-            spec.image_spec.gamma,
-            spec.image_spec.normalize_per_image,
-        )
-        rendered = render.to_rgb(rendered)
-        results.append(rendered)
+        results.append(_render_for_gallery(tensor[b], spec.image_spec))
     return results
 
 
@@ -155,20 +137,53 @@ def render_tensor_gallery(
     tensors: Sequence[Tensor],
     spec: GallerySpec = GallerySpec(),
 ) -> list[Tensor]:
+    return [_render_for_gallery(t, spec.image_spec) for t in tensors]
+
+
+def render_channel_gallery(
+    image: Union[Tensor, "ImageDetail"],
+    spec: GallerySpec = GallerySpec(),
+    channels: Optional[Sequence[int]] = None,
+) -> list[Tensor]:
+    """Split a multi-channel image into per-channel displayable RGB tensors.
+
+    Each channel is independently normalized and colormapped.  Useful for
+    OME-TIFF images where each channel is a distinct modality.
+
+    Parameters
+    ----------
+    image : Tensor or ImageDetail
+        A CHW or BCHW tensor with any number of channels.
+    spec : GallerySpec
+        Controls normalization, colormap, and layout.  ``image_spec.channel``
+        is ignored — each channel is rendered individually.
+    channels : list of int, optional
+        Which channels to include.  ``None`` renders all channels.
+
+    Returns
+    -------
+    list[Tensor]
+        One 3×H×W RGB tensor per selected channel.
+    """
+    if hasattr(image, 'get'):
+        tensor = image.get(ImageDetail.Keys.IMAGE)
+    else:
+        tensor = image
+
+    tensor = render.to_chw(tensor)
+    C = tensor.shape[0]
+
+    if channels is None:
+        channels = list(range(C))
+
+    from dataclasses import replace as dc_replace
+    base_spec = dc_replace(spec.image_spec, channel=None)
+
     results = []
-    for tensor in tensors:
-        rendered = render.prepare_for_display(
-            tensor,
-            spec.image_spec.normalize,
-            spec.image_spec.percentile_low,
-            spec.image_spec.percentile_high,
-            spec.image_spec.vmin,
-            spec.image_spec.vmax,
-            spec.image_spec.gamma,
-            spec.image_spec.normalize_per_image,
-        )
-        rendered = render.to_rgb(rendered)
-        results.append(rendered)
+    for ch in channels:
+        if ch < 0 or ch >= C:
+            raise IndexError(f"channel {ch} out of range for {C}-channel image")
+        results.append(_render_for_gallery(tensor[ch:ch+1], base_spec))
     return results
 
 

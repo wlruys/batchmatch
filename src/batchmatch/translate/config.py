@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, ClassVar, Optional
+from typing import Any, ClassVar
 
 __all__ = [
     "TranslationConfig",
@@ -16,7 +16,7 @@ __all__ = [
 ]
 
 
-def _validate_overlap_fraction(value: Optional[float]) -> None:
+def _validate_overlap_fraction(value: float | None) -> None:
     if value is None:
         return
     if not 0.0 <= value <= 1.0:
@@ -64,7 +64,7 @@ class TranslationConfig:
 class CCTranslationConfig(TranslationConfig):
     METHOD: ClassVar[str] = "cc"
 
-    overlap_fraction: Optional[float] = None
+    overlap_fraction: float | None = None
     mean_centered: bool = False
 
     def __post_init__(self) -> None:
@@ -81,7 +81,7 @@ class CCTranslationConfig(TranslationConfig):
 class MeanCCTranslationConfig(TranslationConfig):
     METHOD: ClassVar[str] = "mean_cc"
 
-    overlap_fraction: Optional[float] = None
+    overlap_fraction: float | None = None
     mean_centered: bool = True
 
     def __post_init__(self) -> None:
@@ -98,7 +98,7 @@ class MeanCCTranslationConfig(TranslationConfig):
 class GCCTranslationConfig(TranslationConfig):
     METHOD: ClassVar[str] = "gcc"
 
-    overlap_fraction: Optional[float] = 0.99
+    overlap_fraction: float | None = 0.99
 
     def __post_init__(self) -> None:
         _validate_overlap_fraction(self.overlap_fraction)
@@ -111,7 +111,7 @@ class GCCTranslationConfig(TranslationConfig):
 class NCCTranslationConfig(TranslationConfig):
     METHOD: ClassVar[str] = "ncc"
 
-    overlap_fraction: Optional[float] = 0.99
+    overlap_fraction: float | None = 0.99
     eps: float = 1e-6
 
     def __post_init__(self) -> None:
@@ -166,7 +166,7 @@ class GPCTranslationConfig(TranslationConfig):
 class NGFTranslationConfig(TranslationConfig):
     METHOD: ClassVar[str] = "ngf"
 
-    overlap_fraction: Optional[float] = 0.99
+    overlap_fraction: float | None = 0.99
     weight_by_gradient_norm: bool = False
     gradient_norm_eps: float = 1e-6
 
@@ -186,7 +186,7 @@ class NGFTranslationConfig(TranslationConfig):
 class GNGFTranslationConfig(TranslationConfig):
     METHOD: ClassVar[str] = "gngf"
 
-    overlap_fraction: Optional[float] = 0.99
+    overlap_fraction: float | None = 0.99
     p: int = 2
 
     def __post_init__(self) -> None:

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence, Tuple, Union
+from collections.abc import Sequence
 
 import torch
 from tensordict import TensorDict
@@ -8,14 +8,14 @@ from tensordict import TensorDict
 from batchmatch.helpers.tensor import to_bchw
 
 Tensor = torch.Tensor
-NestedKey = Union[str, Tuple[str, ...]]
+NestedKey = str | tuple[str, ...]
 
 
 def _move_tensor(
-    t: Optional[Tensor],
-    device: Optional[torch.device],
-    dtype: Optional[torch.dtype],
-) -> Optional[Tensor]:
+    t: Tensor | None,
+    device: torch.device | None,
+    dtype: torch.dtype | None,
+) -> Tensor | None:
     if t is None:
         return None
     if device is not None:
@@ -127,17 +127,17 @@ class WarpParams(CacheTD):
     @classmethod
     def from_components(
         cls, 
-        angle: Optional[Tensor] = None,
-        scale_x: Optional[Tensor] = None,
-        scale_y: Optional[Tensor] = None,
-        shear_x: Optional[Tensor] = None,
-        shear_y: Optional[Tensor] = None,
-        tx: Optional[Tensor] = None,
-        ty: Optional[Tensor] = None, 
-        center_x: Optional[Tensor] = None,
-        center_y: Optional[Tensor] = None,
-        device: Optional[torch.device] = None,
-        dtype: Optional[torch.dtype] = None,
+        angle: Tensor | None = None,
+        scale_x: Tensor | None = None,
+        scale_y: Tensor | None = None,
+        shear_x: Tensor | None = None,
+        shear_y: Tensor | None = None,
+        tx: Tensor | None = None,
+        ty: Tensor | None = None, 
+        center_x: Tensor | None = None,
+        center_y: Tensor | None = None,
+        device: torch.device | None = None,
+        dtype: torch.dtype | None = None,
     ) -> "WarpParams":
         """
         Build warp parameters from component tensors.
@@ -166,7 +166,7 @@ class WarpParams(CacheTD):
         if device is None:
             device = torch.device("cpu")
 
-        def prepare(t: Optional[Tensor]) -> Optional[Tensor]:
+        def prepare(t: Tensor | None) -> Tensor | None:
             if t is None:
                 return None
             if not isinstance(t, torch.Tensor):
@@ -299,11 +299,11 @@ class TranslationResults(CacheTD):
         return self.get(self.Keys.SCORE)
     
     @property
-    def surface(self) -> Optional[Tensor]:
+    def surface(self) -> Tensor | None:
         return self.get(self.Keys.SURFACE, default=None)
     
     @property
-    def search_dimensions(self) -> Optional[Tuple[Tensor, Tensor]]:
+    def search_dimensions(self) -> Optional[tuple[Tensor, Tensor]]:
         search_h = self.get(self.Keys.SEARCH_H, default=None)
         search_w = self.get(self.Keys.SEARCH_W, default=None)
         if search_h is None or search_w is None:
@@ -311,7 +311,7 @@ class TranslationResults(CacheTD):
         return (search_h, search_w)
     
     @property
-    def content_dimensions(self) -> Optional[Tuple[Tensor, Tensor]]:
+    def content_dimensions(self) -> Optional[tuple[Tensor, Tensor]]:
         search_h = self.get(self.Keys.SEARCH_H_CONTENT, default=None)
         search_w = self.get(self.Keys.SEARCH_W_CONTENT, default=None)
         if search_h is None or search_w is None:
@@ -324,11 +324,11 @@ class TranslationResults(CacheTD):
         x: Tensor,
         y: Tensor,
         score: Tensor,
-        surface: Optional[Tensor] = None,
-        search_h: Optional[Tensor] = None,
-        search_w: Optional[Tensor] = None,
-        device : Optional[torch.device] = None,
-        dtype : Optional[torch.dtype] = None,
+        surface: Tensor | None = None,
+        search_h: Tensor | None = None,
+        search_w: Tensor | None = None,
+        device : torch.device | None = None,
+        dtype : torch.dtype | None = None,
     ) -> "TranslationResults":
         """
         Build translation results from component tensors.
@@ -456,27 +456,27 @@ class ImageDetail(CacheTD):
         return self.get(self.Keys.IMAGE)
     
     @property
-    def mask(self) -> Optional[Tensor]:
+    def mask(self) -> Tensor | None:
         return self.get(self.Keys.DOMAIN.MASK, default=None)
     
     @property
-    def box(self) -> Optional[Tensor]:
+    def box(self) -> Tensor | None:
         return self.get(self.Keys.DOMAIN.BOX, default=None)
     
     @property
-    def quad(self) -> Optional[Tensor]:
+    def quad(self) -> Tensor | None:
         return self.get(self.Keys.DOMAIN.QUAD, default=None)
     
     @property
-    def gx(self) -> Optional[Tensor]:
+    def gx(self) -> Tensor | None:
         return self.get(self.Keys.GRAD.X, default=None)
     
     @property
-    def gy(self) -> Optional[Tensor]:
+    def gy(self) -> Tensor | None:
         return self.get(self.Keys.GRAD.Y, default=None)
     
     @property
-    def gi(self) -> Optional[Tensor]:
+    def gi(self) -> Tensor | None:
         gi = self.get(self.Keys.GRAD.I, default=None)
         if gi is not None:
             return gi
@@ -487,11 +487,11 @@ class ImageDetail(CacheTD):
         return None
     
     @property
-    def warp(self) -> Optional[WarpParams]:
+    def warp(self) -> WarpParams | None:
         return self.get(self.Keys.WARP.ROOT, default=None)
     
     @property
-    def translation_results(self) -> Optional[TranslationResults]:
+    def translation_results(self) -> TranslationResults | None:
         return self.get(self.Keys.TRANSLATION.ROOT, default=None)
     
     @property
@@ -521,7 +521,7 @@ class ImageDetail(CacheTD):
             self.set(self.Keys.IMAGE, img * mask)
 
     @property
-    def window(self) -> Optional[Tensor]:
+    def window(self) -> Tensor | None:
         return self.get(self.Keys.DOMAIN.WINDOW, default=None)
 
     def window_image(self, set: bool = False) -> Tensor:
@@ -548,7 +548,7 @@ class ImageDetail(CacheTD):
             self.set(self.Keys.GRAD.Y, w_gy)
         return w_gy
     
-    def window_gi(self, set: bool = False) -> Optional[Tensor]:
+    def window_gi(self, set: bool = False) -> Tensor | None:
         window = self.get(self.Keys.DOMAIN.WINDOW)
         gi = self.gi
         if gi is None:
@@ -557,15 +557,6 @@ class ImageDetail(CacheTD):
         if set:
             self.set(self.Keys.GRAD.I, w_gi)
         return w_gi
-
-    @property
-    def tiff_meta(self) -> "object | None":
-        """Optional TiffMeta attached during TIFF loading."""
-        return getattr(self, "_tiff_meta", None)
-
-    @tiff_meta.setter
-    def tiff_meta(self, meta: "object | None") -> None:
-        self._tiff_meta = meta
 
     @classmethod
     def from_image(cls, image: Tensor, *, tiff_meta: "object | None" = None) -> "ImageDetail":
@@ -576,13 +567,13 @@ class ImageDetail(CacheTD):
         return detail
     
     def add_warp_params(self,
-        angle: Optional[Tensor] = None,
-        scale_x: Optional[Tensor] = None,
-        scale_y: Optional[Tensor] = None,
-        shear_x: Optional[Tensor] = None,
-        shear_y: Optional[Tensor] = None,
-        tx: Optional[Tensor] = None,
-        ty: Optional[Tensor] = None,
+        angle: Tensor | None = None,
+        scale_x: Tensor | None = None,
+        scale_y: Tensor | None = None,
+        shear_x: Tensor | None = None,
+        shear_y: Tensor | None = None,
+        tx: Tensor | None = None,
+        ty: Tensor | None = None,
         ) -> None:
         """
         Add WarpParams to the ImageDetail under the WARP namespace.

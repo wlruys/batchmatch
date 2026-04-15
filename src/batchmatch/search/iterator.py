@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Callable, Dict, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, Callable, Iterator
 
 import torch
 from torch import Tensor
@@ -27,8 +27,8 @@ class IteratorStats:
     checked: int = 0
     skipped: int = 0
     
-    best_score: Optional[float] = None
-    best_params: Optional[str] = None
+    best_score: float | None = None
+    best_params: str | None = None
 
     @property
     def valid(self) -> int:
@@ -217,7 +217,7 @@ class _AxisSpec:
 @dataclass
 class _GroupSpec:
     group: AxisGroup
-    axes: List[_AxisSpec]
+    axes: list[_AxisSpec]
     predicate: Callable[..., bool]
     inner_count: int
 
@@ -225,7 +225,7 @@ class _GroupSpec:
 def _build_group_spec(
     grid: GridAP,
     group: AxisGroup,
-    axis_ranges: Dict[str, range],
+    axis_ranges: dict[str, range],
     inner_count: int,
 ) -> _GroupSpec:
     axes = []
@@ -276,12 +276,12 @@ class WarpParamIterator:
         batch_size: int,
         device: str | torch.device = "cpu",
         dtype: torch.dtype = torch.float32,
-        angles_block: Optional[Tuple[int, int]] = None,
-        scales_x_block: Optional[Tuple[int, int]] = None,
-        scales_y_block: Optional[Tuple[int, int]] = None,
-        shear_x_block: Optional[Tuple[int, int]] = None,
-        shear_y_block: Optional[Tuple[int, int]] = None,
-        group_tables: Optional[Dict["AxisGroup", "_GroupTable"]] = None,
+        angles_block: tuple[int, int] | None = None,
+        scales_x_block: tuple[int, int] | None = None,
+        scales_y_block: tuple[int, int] | None = None,
+        shear_x_block: tuple[int, int] | None = None,
+        shear_y_block: tuple[int, int] | None = None,
+        group_tables: dict["AxisGroup", "_GroupTable"] | None = None,
     ):
         if batch_size <= 0:
             raise ValueError("batch_size must be positive")
@@ -291,7 +291,7 @@ class WarpParamIterator:
         self._device = torch.device(device)
         self._dtype = dtype
 
-        self._tensor_buffers: Optional[Dict[str, Tensor]] = None
+        self._tensor_buffers: dict[str, Tensor] | None = None
         self._init_tensor_buffers()
         
         self._axis_ranges = self._compute_axis_ranges(
@@ -315,13 +315,13 @@ class WarpParamIterator:
     def _compute_axis_ranges(
         self,
         *,
-        angles_block: Optional[Tuple[int, int]],
-        scales_x_block: Optional[Tuple[int, int]],
-        scales_y_block: Optional[Tuple[int, int]],
-        shear_x_block: Optional[Tuple[int, int]],
-        shear_y_block: Optional[Tuple[int, int]],
-    ) -> Dict[str, range]:
-        def resolve_range(block: Optional[Tuple[int, int]], total: int) -> range:
+        angles_block: tuple[int, int] | None,
+        scales_x_block: tuple[int, int] | None,
+        scales_y_block: tuple[int, int] | None,
+        shear_x_block: tuple[int, int] | None,
+        shear_y_block: tuple[int, int] | None,
+    ) -> dict[str, range]:
+        def resolve_range(block: tuple[int, int] | None, total: int) -> range:
             if block is None:
                 return range(total)
             start, count = block
@@ -364,7 +364,7 @@ class WarpParamIterator:
         }
 
     @property
-    def group_tables(self) -> Dict["AxisGroup", "_GroupTable"]:
+    def group_tables(self) -> dict["AxisGroup", "_GroupTable"]:
         return self._group_tables
 
     @dataclass(frozen=True, slots=True)
@@ -620,12 +620,12 @@ def iter_warp_params(
     batch_size: int,
     device: str | torch.device = "cpu",
     dtype: torch.dtype = torch.float32,
-    angles_block: Optional[Tuple[int, int]] = None,
-    scales_x_block: Optional[Tuple[int, int]] = None,
-    scales_y_block: Optional[Tuple[int, int]] = None,
-    shear_x_block: Optional[Tuple[int, int]] = None,
-    shear_y_block: Optional[Tuple[int, int]] = None,
-    stats_out: Optional[IteratorStats] = None,
+    angles_block: tuple[int, int] | None = None,
+    scales_x_block: tuple[int, int] | None = None,
+    scales_y_block: tuple[int, int] | None = None,
+    shear_x_block: tuple[int, int] | None = None,
+    shear_y_block: tuple[int, int] | None = None,
+    stats_out: IteratorStats | None = None,
 ) -> Iterator[WarpParams]:
     iterator = WarpParamIterator(
         grid,

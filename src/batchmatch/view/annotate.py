@@ -242,15 +242,20 @@ def annotate_from_detail(
     quad_spec: Optional[QuadAnnotationSpec] = None,
     box_spec: Optional[BoxAnnotationSpec] = None,
     point_spec: Optional[PointAnnotationSpec] = None,
+    *,
+    image: Optional[Tensor] = None,
 ) -> Tensor:
-    image = detail.image.detach()
-    if image.ndim == 4:
-        B, C, H, W = image.shape
+    if image is not None:
+        base = image.detach()
+    else:
+        base = detail.image.detach()
+    if base.ndim == 4:
+        B, C, H, W = base.shape
     else:
         B = 1
-        W = image.shape[-1] if image.ndim >= 2 else 0
+        W = base.shape[-1] if base.ndim >= 2 else 0
 
-    result = render.to_chw(image).clone()
+    result = render.to_chw(base).clone()
 
     def offset_quads(quads: Tensor, b: int) -> Tensor:
         if b == 0:

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 import torch
 
 from .utility import _fft2d, _fftshift2d, _ifft2d, _irfft2d, _rfft2d
@@ -16,10 +14,10 @@ def _phase_correlation_surface(
     p : float = 1.0,
     q: float = 1.0,
     eps: float = 1e-8,
-    F_ref: Optional[Tensor] = None,
-    F_mov_out: Optional[Tensor] = None,
-    cross_power_out: Optional[Tensor] = None,
-    surface_out: Optional[Tensor] = None,
+    F_ref: Tensor | None = None,
+    F_mov_out: Tensor | None = None,
+    cross_power_out: Tensor | None = None,
+    surface_out: Tensor | None = None,
 ) -> Tensor:
     """
     Compute phase correlation surface using full FFT.
@@ -67,10 +65,10 @@ def _rphase_correlation_surface(
     p: float = 1.0,
     q: float = 1.0,
     eps: float = 1e-8,
-    F_ref: Optional[Tensor] = None,
-    F_mov_out: Optional[Tensor] = None,
-    cross_power_out: Optional[Tensor] = None,
-    surface_out: Optional[Tensor] = None,
+    F_ref: Tensor | None = None,
+    F_mov_out: Tensor | None = None,
+    cross_power_out: Tensor | None = None,
+    surface_out: Tensor | None = None,
 ) -> Tensor:
     """
     Compute phase correlation surface using real FFT.
@@ -110,10 +108,10 @@ def _rphase_correlation_surface_unshifted(
     p: float = 1.0,
     q: float = 1.0,
     eps: float = 1e-8,
-    F_ref: Optional[Tensor] = None,
-    F_mov_out: Optional[Tensor] = None,
-    cross_power_out: Optional[Tensor] = None,
-    surface_out: Optional[Tensor] = None,
+    F_ref: Tensor | None = None,
+    F_mov_out: Tensor | None = None,
+    cross_power_out: Tensor | None = None,
+    surface_out: Tensor | None = None,
 ) -> Tensor:
     """
     Compute phase correlation surface WITHOUT fftshift (prevents allocation).
@@ -155,10 +153,10 @@ def _phase_correlation_surface_unshifted(
     eps: float = 1e-8,
     p: float = 1.0,
     q: float = 1.0,
-    F_ref: Optional[Tensor] = None,
-    F_mov_out: Optional[Tensor] = None,
-    cross_power_out: Optional[Tensor] = None,
-    surface_out: Optional[Tensor] = None,
+    F_ref: Tensor | None = None,
+    F_mov_out: Tensor | None = None,
+    cross_power_out: Tensor | None = None,
+    surface_out: Tensor | None = None,
 ) -> Tensor:
     """
     Compute phase correlation surface WITHOUT fftshift (prevents allocation).

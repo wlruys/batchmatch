@@ -39,6 +39,7 @@ from batchmatch.search.product import (
     ProductPipelineConfig,
     build_product_pipeline,
 )
+from batchmatch.search.transform import RegistrationTransform
 
 __all__ = [
     "AP",
@@ -71,6 +72,7 @@ __all__ = [
     "ProductCropStage",
     "ProductPipelineConfig",
     "build_product_pipeline",
+    "RegistrationTransform",
 ]
 
 try:

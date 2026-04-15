@@ -7,6 +7,7 @@ __all__ = [
     "Schema",
     "IMAGEDETAIL_SCHEMA",
     "PRODUCT_SCHEMA",
+    "REGISTRATION_SCHEMA",
 ]
 
 
@@ -32,3 +33,4 @@ class Schema:
 
 IMAGEDETAIL_SCHEMA = Schema("batchmatch.imagedetail", 1)
 PRODUCT_SCHEMA = Schema("batchmatch.product", 1)
+REGISTRATION_SCHEMA = Schema("batchmatch.registration", 2)

@@ -1,4 +1,4 @@
-"""Low-level TIFF array reading: single-channel, all-channel, pyramid."""
+"""Internal low-level TIFF array reading helpers."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import tifffile
 
-from batchmatch.io.tiff_meta import TiffMeta
+from batchmatch.io._tiff_meta import TiffMeta
 
 __all__ = [
     "resolve_channel_index",
@@ -23,7 +23,6 @@ def resolve_channel_index(
     channel_names: list[str],
     axes: str,
 ) -> int:
-    """Resolve a channel selector to an integer index."""
     if "C" not in axes:
         raise ValueError(
             f"channel={channel!r} requested but file has no C axis "
@@ -48,9 +47,8 @@ def read_single_channel(
     meta: TiffMeta,
     channel_idx: int,
 ) -> np.ndarray:
-    """Read a single channel by its series-page index (avoids full-array alloc)."""
     series = tif.series[0]
-    c_axis = meta.axes_raw.find("C")
+    c_axis = meta.axes.find("C")
     if c_axis < 0 or len(series.pages) <= 1:
         arr = series.asarray()
         return np.take(arr, channel_idx, axis=c_axis)
@@ -66,7 +64,6 @@ def read_single_channel(
 
 
 def read_all_channels(tif: tifffile.TiffFile) -> np.ndarray:
-    """Read the complete multi-channel array from the first series."""
     return tif.series[0].asarray()
 
 
@@ -74,10 +71,6 @@ def find_best_pyramid_level(
     tif: tifffile.TiffFile,
     downsample: int,
 ) -> tuple[int, int]:
-    """Pick the pyramid level whose spatial size best matches *downsample*.
-
-    Returns ``(level_index, remaining_factor)``.
-    """
     series0 = tif.series[0]
     levels: list[tifffile.TiffPageSeries] = []
     if hasattr(series0, "levels"):
@@ -113,7 +106,6 @@ def read_pyramid_level(
     tif: tifffile.TiffFile,
     level: int,
 ) -> np.ndarray:
-    """Read the array for a specific pyramid level."""
     series0 = tif.series[0]
     if hasattr(series0, "levels"):
         return series0.levels[level].asarray()

@@ -1,38 +1,65 @@
 from __future__ import annotations
 
+from batchmatch.io._tiff_meta import TiffMeta
 from batchmatch.io.config import IOConfig, OutputConfig
 from batchmatch.io.convert import to_bchw_float
 from batchmatch.io.downsample import area_downsample, crop_region, validate_region
-from batchmatch.io.images import ImageIO
 from batchmatch.io.imagedetail import ImageDetailIO
-from batchmatch.io.product import ProductIO, RegistrationProduct
+from batchmatch.io.images import (
+    ImageIO,
+    ImagePolicy,
+    ImageSource,
+    RasterSource,
+    SaveOptions,
+    TiffSource,
+    load_image,
+    open_image,
+    save_image,
+)
+from batchmatch.io.space import (
+    ImageSpace,
+    PaddingLTRB,
+    RegionYXHW,
+    SourceFormat,
+    SourceInfo,
+    SpatialImage,
+)
+from batchmatch.io.product import ProductIO
+from batchmatch.io.export import export_registered
 from batchmatch.io.tensors import TensorIO
-from batchmatch.io.tiff import load_tiff, DownsampleMode, ReturnMode
-from batchmatch.io.tiff_lazy import LazyTiffReader
-from batchmatch.io.tiff_meta import TiffMeta, read_meta
 
 __all__ = [
-    # Config classes
+    # Config
     "IOConfig",
     "OutputConfig",
     # Image I/O
     "ImageIO",
+    "ImagePolicy",
+    "ImageSource",
+    "RasterSource",
+    "SaveOptions",
+    "TiffSource",
+    "load_image",
+    "open_image",
+    "save_image",
+    # Tensor I/O
     "TensorIO",
-    # TIFF I/O
-    "load_tiff",
-    "read_meta",
+    # TIFF metadata (re-exported for introspection)
     "TiffMeta",
-    "LazyTiffReader",
-    "DownsampleMode",
-    "ReturnMode",
-    # Conversion / spatial ops
+    # Spatial ops
     "to_bchw_float",
     "area_downsample",
     "crop_region",
     "validate_region",
-    # ImageDetail I/O
+    # Detail / product I/O
     "ImageDetailIO",
-    # Product I/O
-    "RegistrationProduct",
     "ProductIO",
+    "export_registered",
+    # Spatial types
+    "ImageSpace",
+    "PaddingLTRB",
+    "RegionYXHW",
+    "SourceFormat",
+    "SourceInfo",
+    "SpatialImage",
 ]

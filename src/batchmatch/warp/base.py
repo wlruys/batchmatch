@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import List, Mapping, Optional, Sequence, Union
+from typing import Mapping, Optional, Sequence
 
 from batchmatch.base.pipeline import (
     Pipeline,
@@ -41,10 +41,23 @@ _WARP_STAGE_FIELDS = (
     "boxes", "aux_boxes", "quad", "aux_quads",
 )
 
-_WARP_OUTPUT_FIELDS = tuple(field for field in _WARP_STAGE_FIELDS if field != "prepare")
+_WARP_OUTPUT_FIELDS = tuple(f for f in _WARP_STAGE_FIELDS if f != "prepare")
 
 
 def _normalize_warp_outputs(outputs: Sequence[str]) -> list[str]:
+    if isinstance(outputs, str):
+        raise TypeError(
+            f"outputs must be a list of strings, not a bare string: {outputs!r}"
+        )
+    if not isinstance(outputs, Sequence):
+        raise TypeError(
+            f"outputs must be a sequence of strings, got {type(outputs).__name__}"
+        )
+    for i, o in enumerate(outputs):
+        if not isinstance(o, str):
+            raise TypeError(
+                f"outputs[{i}] must be a string, got {type(o).__name__}: {o!r}"
+            )
     normalized = [str(o) for o in outputs]
     lowered = {o.lower() for o in normalized}
     if "all" in lowered:
@@ -57,9 +70,9 @@ def _normalize_warp_outputs(outputs: Sequence[str]) -> list[str]:
         )
     ordered = []
     lowered_set = set(lowered)
-    for field in _WARP_OUTPUT_FIELDS:
-        if field in lowered_set:
-            ordered.append(field)
+    for f in _WARP_OUTPUT_FIELDS:
+        if f in lowered_set:
+            ordered.append(f)
     return ordered
 
 
@@ -89,6 +102,12 @@ def _build_outputs_spec(
         if unknown:
             raise ValueError(
                 f"warp_pipeline has unexpected keys: {sorted(unknown)}"
+            )
+        unrequested = set(overrides) - set(resolved_outputs)
+        if unrequested:
+            raise ValueError(
+                f"Stage overrides {sorted(unrequested)} were not listed in outputs "
+                f"{resolved_outputs}. Add them to outputs or remove the overrides."
             )
         for key, value in overrides.items():
             spec[key] = value
@@ -148,9 +167,15 @@ def coerce_warp_pipeline_spec(
 
 
 def build_warp_pipeline(
-    spec: Union[WarpPipelineSpec, Mapping, str, WarpPipelineConfig] | None = None,
+    spec: WarpPipelineSpec | Mapping | str | WarpPipelineConfig | None = None,
     **kwargs,
 ) -> Pipeline:
+    """Build a warp pipeline from a spec.
+
+    When *spec* is a string, **kwargs are split: keys matching known stage
+    names (image, mask, etc.) become pipeline stage overrides; all other
+    kwargs are forwarded as constructor parameters to the prepare stage.
+    """
     non_prepare_stages = set(_WARP_STAGE_FIELDS) - {"prepare"}
 
     if spec is None:
@@ -183,7 +208,7 @@ def build_warp_pipeline(
     if not isinstance(spec, WarpPipelineSpec):
         spec = coerce_warp_pipeline_spec(spec)
 
-    stages: List[Stage] = []
+    stages: list[Stage] = []
 
     for stage_field in _WARP_STAGE_FIELDS:
         stage_spec = getattr(spec, stage_field)

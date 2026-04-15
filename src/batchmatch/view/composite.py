@@ -8,7 +8,7 @@ from torch import Tensor
 
 from batchmatch.base.tensordicts import ImageDetail
 from batchmatch.helpers.tensor import to_bchw_flexible
-from .config import OverlaySpec, EdgeOverlaySpec, CheckerboardSpec
+from .config import ChannelSelection, OverlaySpec, EdgeOverlaySpec, CheckerboardSpec
 from . import render
 
 __all__ = [
@@ -17,6 +17,99 @@ __all__ = [
     "render_checkerboard",
     "render_side_by_side",
 ]
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+def _get_edges_from_detail(detail: ImageDetail, fallback_img: Tensor = None) -> Tensor:
+    """Compute normalized edge magnitude from an ImageDetail.
+
+    Uses stored gradients when available, otherwise falls back to Sobel on the
+    image tensor.  When a domain mask is present the normalization ignores
+    boundary pixels so that padding does not dominate the range.
+    """
+    if ImageDetail.Keys.GRAD.X in detail:
+        gx = render.to_chw(detail.get(ImageDetail.Keys.GRAD.X))
+        gy = render.to_chw(detail.get(ImageDetail.Keys.GRAD.Y))
+        if gx.shape[0] > 1:
+            gx = gx[:1]
+        if gy.shape[0] > 1:
+            gy = gy[:1]
+        mag = render.gradient_magnitude(gx, gy)
+    else:
+        img = fallback_img if fallback_img is not None else detail.get(ImageDetail.Keys.IMAGE)
+        mag = render.compute_edge_magnitude(img)
+
+    mask = detail.get(ImageDetail.Keys.DOMAIN.MASK, default=None)
+    if mask is None:
+        return render.normalize_minmax(mag)
+
+    # Handle BHW or BCHW masks -> CHW
+    mask = to_bchw_flexible(mask)[0]
+    if mask.shape[-2:] != mag.shape[-2:]:
+        mask = F.interpolate(
+            mask.unsqueeze(0), size=mag.shape[-2:], mode="nearest"
+        ).squeeze(0)
+
+    # Erode mask slightly to exclude boundary pixels from normalization
+    if mask.shape[0] == 1:
+        k = 5
+        kernel = torch.ones(1, 1, k, k, device=mask.device, dtype=mask.dtype)
+        eroded = F.conv2d(mask.unsqueeze(0), kernel, padding=k // 2)
+        eroded = (eroded >= k * k).float().squeeze(0)
+    else:
+        eroded = mask
+
+    # Normalize within valid region only
+    valid_vals = (mag * eroded)[eroded > 0.5]
+    if valid_vals.numel() > 0:
+        vmin, vmax = valid_vals.min(), valid_vals.max()
+        mag = ((mag - vmin) / (vmax - vmin + 1e-8)).clamp(0, 1)
+    else:
+        mag = render.normalize_minmax(mag)
+    return mag
+
+
+def _dilate_edge_mask(edge_mask: Tensor, thickness: int) -> Tensor:
+    """Dilate a CHW edge mask using a box filter when thickness > 1."""
+    if thickness <= 1:
+        return edge_mask
+    k = 2 * thickness + 1
+    kernel = torch.ones(1, 1, k, k, dtype=edge_mask.dtype, device=edge_mask.device)
+    mask_4d = edge_mask.unsqueeze(0) if edge_mask.ndim == 3 else edge_mask.unsqueeze(0).unsqueeze(0)
+    dilated = F.conv2d(mask_4d, kernel, padding=thickness)
+    dilated = (dilated / kernel.numel()).clamp(0, 1).squeeze()
+    if dilated.ndim == 2:
+        dilated = dilated.unsqueeze(0)
+    return dilated
+
+
+def _blend_edges(
+    image: Tensor,
+    edges: Tensor,
+    color: Tensor,
+    spec: EdgeOverlaySpec,
+    target_hw: tuple[int, int],
+) -> Tensor:
+    """Apply gamma, threshold, dilate and blend edge mask onto ``image``."""
+    H, W = target_hw
+    if edges.shape[-2:] != (H, W):
+        edges = F.interpolate(
+            edges.unsqueeze(0), size=(H, W), mode="bilinear", align_corners=False
+        ).squeeze(0)
+
+    edges = render.apply_gamma(edges, spec.gamma)
+
+    if spec.edge_threshold is not None:
+        edge_mask = render.threshold_edges(edges, spec.edge_threshold)
+    else:
+        edge_mask = edges
+
+    edge_mask = _dilate_edge_mask(edge_mask, spec.edge_thickness)
+    alpha = (spec.edge_alpha * edge_mask).clamp(0, 1)
+    return render.blend_alpha(image, color.expand(-1, H, W), alpha)
 
 
 def _normalize_pair(
@@ -57,17 +150,13 @@ def _normalize_pair(
 def _resize_to_match(mov: Tensor, ref: Tensor) -> Tensor:
     if mov.shape[-2:] == ref.shape[-2:]:
         return mov
-    return F.interpolate(
-        mov.unsqueeze(0) if mov.ndim == 3 else mov,
-        size=ref.shape[-2:],
-        mode="bilinear",
-        align_corners=False,
-    ).squeeze(0) if mov.ndim == 3 else F.interpolate(
-        mov,
-        size=ref.shape[-2:],
-        mode="bilinear",
-        align_corners=False,
-    )
+    squeeze = mov.ndim == 3
+    if squeeze:
+        mov = mov.unsqueeze(0)
+    mov = F.interpolate(mov, size=ref.shape[-2:], mode="bilinear", align_corners=False)
+    if squeeze:
+        mov = mov.squeeze(0)
+    return mov
 
 
 def render_overlay(
@@ -77,6 +166,10 @@ def render_overlay(
 ) -> Tensor:
     ref_img = reference.get(ImageDetail.Keys.IMAGE)
     mov_img = moving.get(ImageDetail.Keys.IMAGE)
+
+    # Multi-channel: select before layout conversion
+    ref_img = render.select_channels(ref_img, spec.channel)
+    mov_img = render.select_channels(mov_img, spec.channel)
 
     if spec.normalize_per_image:
         ref_img = render.to_bchw(ref_img)
@@ -112,71 +205,17 @@ def render_edge_overlay(
     moving: ImageDetail,
     spec: EdgeOverlaySpec = EdgeOverlaySpec(),
 ) -> Tensor:
-    ref_img = reference.get(ImageDetail.Keys.IMAGE)
-    mov_img = moving.get(ImageDetail.Keys.IMAGE)
-
-    ref_img = render.to_chw(ref_img)
-    mov_img = render.to_chw(mov_img)
-
+    ref_img = render.select_channels(reference.get(ImageDetail.Keys.IMAGE), spec.channel)
+    mov_img = render.select_channels(moving.get(ImageDetail.Keys.IMAGE), spec.channel)
     mov_img = _resize_to_match(mov_img, ref_img)
 
-    ref_norm = render.normalize_minmax(ref_img)
-    base_rgb = render.to_rgb(ref_norm)
-
+    base_rgb = render.to_rgb(render.normalize_minmax(ref_img))
     _, H, W = base_rgb.shape
 
     if spec.edge_source == "none":
         return base_rgb
 
-    def _get_edges(detail: ImageDetail, img: Tensor) -> Tensor:
-        if ImageDetail.Keys.GRAD.X in detail:
-            gx = detail.get(ImageDetail.Keys.GRAD.X)
-            gy = detail.get(ImageDetail.Keys.GRAD.Y)
-            gx = render.to_chw(gx)
-            gy = render.to_chw(gy)
-            if gx.shape[0] > 1:
-                gx = gx[:1]
-            if gy.shape[0] > 1:
-                gy = gy[:1]
-            mag = render.gradient_magnitude(gx, gy)
-        else:
-            mag = render.compute_edge_magnitude(img)
-
-        # Use mask for normalization if available to prevent boundary edges
-        # from dominating when images are padded
-        mask = detail.get(ImageDetail.Keys.DOMAIN.MASK, default=None)
-        if mask is not None:
-            # Handle BHW or BCHW masks - convert to BCHW then take first batch
-            mask = to_bchw_flexible(mask)
-            mask = mask[0]  # Take first batch element -> CHW
-            if mask.shape[-2:] != mag.shape[-2:]:
-                mask = F.interpolate(
-                    mask.unsqueeze(0), size=mag.shape[-2:], mode="nearest"
-                ).squeeze(0)
-            # Erode mask slightly to exclude boundary pixels from normalization
-            if mask.shape[0] == 1:
-                k = 5
-                kernel = torch.ones(1, 1, k, k, device=mask.device, dtype=mask.dtype)
-                eroded = F.conv2d(mask.unsqueeze(0), kernel, padding=k // 2)
-                eroded = (eroded >= k * k).float().squeeze(0)
-            else:
-                eroded = mask
-            # Normalize within valid region only
-            masked_mag = mag * eroded
-            valid_vals = masked_mag[eroded > 0.5]
-            if valid_vals.numel() > 0:
-                vmin = valid_vals.min()
-                vmax = valid_vals.max()
-                mag = (mag - vmin) / (vmax - vmin + 1e-8)
-                mag = mag.clamp(0, 1)
-            else:
-                mag = render.normalize_minmax(mag)
-        else:
-            mag = render.normalize_minmax(mag)
-        return mag
-
     out = base_rgb.clone()
-
     if spec.dim_under_edges < 1.0:
         out = out * spec.dim_under_edges
 
@@ -185,57 +224,18 @@ def render_edge_overlay(
     ).view(3, 1, 1)
 
     if spec.edge_source in ("mov", "both"):
-        mov_edges = _get_edges(moving, mov_img)
-        if mov_edges.shape[-2:] != (H, W):
-            mov_edges = F.interpolate(
-                mov_edges.unsqueeze(0), size=(H, W), mode="bilinear", align_corners=False
-            ).squeeze(0)
-
-        mov_edges = render.apply_gamma(mov_edges, spec.gamma)
-
-        if spec.edge_threshold is not None:
-            edge_mask = render.threshold_edges(mov_edges, spec.edge_threshold)
-        else:
-            edge_mask = mov_edges
-
-        if spec.edge_thickness > 1:
-            k = 2 * spec.edge_thickness + 1
-            kernel = torch.ones(1, 1, k, k, dtype=edge_mask.dtype, device=edge_mask.device)
-            edge_mask_4d = edge_mask.unsqueeze(0) if edge_mask.ndim == 3 else edge_mask.unsqueeze(0).unsqueeze(0)
-            edge_mask = F.conv2d(edge_mask_4d, kernel, padding=spec.edge_thickness)
-            edge_mask = (edge_mask / kernel.numel()).clamp(0, 1).squeeze()
-            if edge_mask.ndim == 2:
-                edge_mask = edge_mask.unsqueeze(0)
-
-        alpha = (spec.edge_alpha * edge_mask).clamp(0, 1)
-        out = render.blend_alpha(out, edge_color.expand(-1, H, W), alpha)
+        mov_edges = _get_edges_from_detail(moving, mov_img)
+        out = _blend_edges(out, mov_edges, edge_color, spec, (H, W))
 
     if spec.edge_source in ("ref", "both"):
-        ref_edges = _get_edges(reference, ref_img)
-
-        ref_edges = render.apply_gamma(ref_edges, spec.gamma)
-
-        if spec.edge_threshold is not None:
-            edge_mask = render.threshold_edges(ref_edges, spec.edge_threshold)
-        else:
-            edge_mask = ref_edges
-
-        if spec.edge_thickness > 1:
-            k = 2 * spec.edge_thickness + 1
-            kernel = torch.ones(1, 1, k, k, dtype=edge_mask.dtype, device=edge_mask.device)
-            edge_mask_4d = edge_mask.unsqueeze(0) if edge_mask.ndim == 3 else edge_mask.unsqueeze(0).unsqueeze(0)
-            edge_mask = F.conv2d(edge_mask_4d, kernel, padding=spec.edge_thickness)
-            edge_mask = (edge_mask / kernel.numel()).clamp(0, 1).squeeze()
-            if edge_mask.ndim == 2:
-                edge_mask = edge_mask.unsqueeze(0)
-
+        ref_edges = _get_edges_from_detail(reference, ref_img)
         if spec.edge_source == "both":
-            ref_color = torch.tensor((0.0, 0.5, 1.0), dtype=out.dtype, device=out.device).view(3, 1, 1)
+            ref_color = torch.tensor(
+                (0.0, 0.5, 1.0), dtype=out.dtype, device=out.device
+            ).view(3, 1, 1)
         else:
             ref_color = edge_color
-
-        alpha = (spec.edge_alpha * edge_mask).clamp(0, 1)
-        out = render.blend_alpha(out, ref_color.expand(-1, H, W), alpha)
+        out = _blend_edges(out, ref_edges, ref_color, spec, (H, W))
 
     return out.clamp(0, 1)
 
@@ -269,6 +269,9 @@ def render_checkerboard(
 ) -> Tensor:
     ref_img = reference.get(ImageDetail.Keys.IMAGE)
     mov_img = moving.get(ImageDetail.Keys.IMAGE)
+
+    ref_img = render.select_channels(ref_img, spec.channel)
+    mov_img = render.select_channels(mov_img, spec.channel)
 
     if spec.normalize_per_image:
         ref_img = render.to_bchw(ref_img)
@@ -334,80 +337,21 @@ def _apply_edge_overlay(
     spec: EdgeOverlaySpec,
 ) -> Tensor:
     _, H, W = image.shape
-
-    def _get_edges(detail: ImageDetail) -> Tensor:
-        if ImageDetail.Keys.GRAD.X in detail:
-            gx = detail.get(ImageDetail.Keys.GRAD.X)
-            gy = detail.get(ImageDetail.Keys.GRAD.Y)
-            gx = render.to_chw(gx)
-            gy = render.to_chw(gy)
-            if gx.shape[0] > 1:
-                gx = gx[:1]
-            if gy.shape[0] > 1:
-                gy = gy[:1]
-            mag = render.gradient_magnitude(gx, gy)
-        else:
-            img = detail.get(ImageDetail.Keys.IMAGE)
-            mag = render.compute_edge_magnitude(img)
-
-        # Use mask for normalization if available to prevent boundary edges
-        # from dominating when images are padded
-        mask = detail.get(ImageDetail.Keys.DOMAIN.MASK, default=None)
-        if mask is not None:
-            # Handle BHW or BCHW masks - convert to BCHW then take first batch
-            mask = to_bchw_flexible(mask)
-            mask = mask[0]  # Take first batch element -> CHW
-            if mask.shape[-2:] != mag.shape[-2:]:
-                mask = F.interpolate(
-                    mask.unsqueeze(0), size=mag.shape[-2:], mode="nearest"
-                ).squeeze(0)
-            # Erode mask slightly to exclude boundary pixels from normalization
-            if mask.shape[0] == 1:
-                k = 5
-                kernel = torch.ones(1, 1, k, k, device=mask.device, dtype=mask.dtype)
-                eroded = F.conv2d(mask.unsqueeze(0), kernel, padding=k // 2)
-                eroded = (eroded >= k * k).float().squeeze(0)
-            else:
-                eroded = mask
-            # Normalize within valid region only
-            masked_mag = mag * eroded
-            valid_vals = masked_mag[eroded > 0.5]
-            if valid_vals.numel() > 0:
-                vmin = valid_vals.min()
-                vmax = valid_vals.max()
-                mag = (mag - vmin) / (vmax - vmin + 1e-8)
-                mag = mag.clamp(0, 1)
-            else:
-                mag = render.normalize_minmax(mag)
-        else:
-            mag = render.normalize_minmax(mag)
-        return mag
-
     out = image.clone()
-    edge_color = torch.tensor(spec.edge_color, dtype=out.dtype, device=out.device).view(3, 1, 1)
+    edge_color = torch.tensor(
+        spec.edge_color, dtype=out.dtype, device=out.device
+    ).view(3, 1, 1)
 
     if spec.edge_source in ("mov", "both"):
-        edges = _get_edges(moving)
-        if edges.shape[-2:] != (H, W):
-            edges = F.interpolate(edges.unsqueeze(0), size=(H, W), mode="bilinear", align_corners=False).squeeze(0)
-        edges = render.apply_gamma(edges, spec.gamma)
-        if spec.edge_threshold is not None:
-            edge_mask = render.threshold_edges(edges, spec.edge_threshold)
-        else:
-            edge_mask = edges
-        alpha = (spec.edge_alpha * edge_mask).clamp(0, 1)
-        out = render.blend_alpha(out, edge_color.expand(-1, H, W), alpha)
+        mov_edges = _get_edges_from_detail(moving)
+        out = _blend_edges(out, mov_edges, edge_color, spec, (H, W))
 
     if spec.edge_source in ("ref", "both"):
-        edges = _get_edges(reference)
-        edges = render.apply_gamma(edges, spec.gamma)
-        if spec.edge_threshold is not None:
-            edge_mask = render.threshold_edges(edges, spec.edge_threshold)
-        else:
-            edge_mask = edges
-        ref_color = torch.tensor((0.2, 0.2, 1.0), dtype=out.dtype, device=out.device).view(3, 1, 1)
-        alpha = (spec.edge_alpha * edge_mask).clamp(0, 1)
-        out = render.blend_alpha(out, ref_color.expand(-1, H, W), alpha)
+        ref_edges = _get_edges_from_detail(reference)
+        ref_color = torch.tensor(
+            (0.2, 0.2, 1.0), dtype=out.dtype, device=out.device
+        ).view(3, 1, 1)
+        out = _blend_edges(out, ref_edges, ref_color, spec, (H, W))
 
     return out
 
@@ -417,9 +361,16 @@ def render_side_by_side(
     moving: ImageDetail,
     gap: int = 4,
     gap_color: tuple[float, float, float] = (0.5, 0.5, 0.5),
+    channel: Optional[ChannelSelection] = None,
+    max_display_size: Optional[int] = None,
 ) -> Tensor:
     ref_img = reference.get(ImageDetail.Keys.IMAGE)
     mov_img = moving.get(ImageDetail.Keys.IMAGE)
+
+    ref_img = render.select_channels(ref_img, channel)
+    mov_img = render.select_channels(mov_img, channel)
+    ref_img = render.downsample_for_display(ref_img, max_display_size)
+    mov_img = render.downsample_for_display(mov_img, max_display_size)
 
     ref_img = render.to_chw(ref_img)
     mov_img = render.to_chw(mov_img)

@@ -1,4 +1,5 @@
 from .config import (
+    ChannelSelection,
     DisplaySpec,
     ImageViewSpec,
     GallerySpec,
@@ -16,6 +17,7 @@ from .config import (
 
 from .display import (
     show_image,
+    show_channels,
     show_tensor,
     show_images,
     show_detail,
@@ -49,6 +51,8 @@ from .render import (
     create_checkerboard_mask,
     draw_grid_lines,
     compute_edge_magnitude,
+    select_channels,
+    downsample_for_display,
 )
 
 from .composite import (
@@ -90,10 +94,12 @@ from .gallery import (
     render_detail_components,
     render_batch_gallery,
     render_tensor_gallery,
+    render_channel_gallery,
 )
 
 
 __all__ = [
+    "ChannelSelection",
     "DisplaySpec",
     "ImageViewSpec",
     "GallerySpec",
@@ -108,6 +114,7 @@ __all__ = [
     "PointAnnotationSpec",
     "BoxAnnotationSpec",
     "show_image",
+    "show_channels",
     "show_tensor",
     "show_images",
     "show_detail",
@@ -138,6 +145,8 @@ __all__ = [
     "create_checkerboard_mask",
     "draw_grid_lines",
     "compute_edge_magnitude",
+    "select_channels",
+    "downsample_for_display",
     "render_overlay",
     "render_edge_overlay",
     "render_checkerboard",
@@ -164,4 +173,5 @@ __all__ = [
     "render_detail_components",
     "render_batch_gallery",
     "render_tensor_gallery",
+    "render_channel_gallery",
 ]

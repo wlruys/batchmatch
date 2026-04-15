@@ -4,7 +4,7 @@ import hashlib
 import os
 import warnings
 from dataclasses import dataclass, replace
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable
 
 import numpy as np
 import torch
@@ -43,8 +43,8 @@ __all__ = [
 class InconsistentInputsError(Exception):
     def __init__(
         self,
-        mismatched_ranks: List[int],
-        checksums: Dict[int, str],
+        mismatched_ranks: list[int],
+        checksums: dict[int, str],
         reference_rank: int = 0,
     ):
         self.mismatched_ranks = mismatched_ranks
@@ -167,7 +167,7 @@ def validate_inputs_consistent(
         )
 
 def _check_collective_error(
-    local_error: Optional[Exception],
+    local_error: Exception | None,
     comm: Any,
 ) -> None:
     rank = comm.Get_rank()
@@ -192,7 +192,7 @@ def _check_collective_error(
             )
 
 
-def serialize_search_result(detail: ImageDetail) -> Dict[str, Any]:
+def serialize_search_result(detail: ImageDetail) -> dict[str, Any]:
     warp = detail.warp
     if warp is None:
         raise ValueError("ImageDetail must contain warp parameters")
@@ -201,13 +201,13 @@ def serialize_search_result(detail: ImageDetail) -> Dict[str, Any]:
     if translation is None:
         raise ValueError("ImageDetail must contain translation results")
 
-    warp_data: Dict[str, np.ndarray] = {}
+    warp_data: dict[str, np.ndarray] = {}
     for key in WarpParams.Keys.PARAMS:
         tensor = warp.get(key, default=None)
         if tensor is not None:
             warp_data[key] = tensor.detach().cpu().numpy()
 
-    translation_data: Dict[str, np.ndarray] = {
+    translation_data: dict[str, np.ndarray] = {
         TranslationResults.Keys.X: translation.tx.detach().cpu().numpy(),
         TranslationResults.Keys.Y: translation.ty.detach().cpu().numpy(),
         TranslationResults.Keys.SCORE: translation.score.detach().cpu().numpy(),
@@ -233,9 +233,9 @@ def serialize_search_result(detail: ImageDetail) -> Dict[str, Any]:
 
 
 def deserialize_search_result(
-    data: Dict[str, Any],
-    device: Optional[Union[str, torch.device]] = None,
-    dtype: Optional[torch.dtype] = None,
+    data: dict[str, Any],
+    device: str | torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> ImageDetail:
     if device is None:
         device = torch.device("cpu")
@@ -244,14 +244,14 @@ def deserialize_search_result(
 
     batch_size = data["batch_size"]
 
-    warp_tensors: Dict[str, torch.Tensor] = {}
+    warp_tensors: dict[str, torch.Tensor] = {}
     for key, arr in data["warp"].items():
         warp_tensors[key] = torch.from_numpy(arr).to(device=device, dtype=dtype)
 
     warp = WarpParams(warp_tensors, batch_size=[batch_size])
 
     trans_data = data["translation"]
-    trans_tensors: Dict[str, torch.Tensor] = {}
+    trans_tensors: dict[str, torch.Tensor] = {}
     for key, arr in trans_data.items():
         trans_tensors[key] = torch.from_numpy(arr).to(device=device, dtype=dtype)
 
@@ -271,7 +271,7 @@ def deserialize_search_result(
     return detail
 
 
-def serialize_search_result_gpu(detail: ImageDetail) -> Dict[str, Any]:
+def serialize_search_result_gpu(detail: ImageDetail) -> dict[str, Any]:
     warp = detail.warp
     if warp is None:
         raise ValueError("ImageDetail must contain warp parameters")
@@ -280,13 +280,13 @@ def serialize_search_result_gpu(detail: ImageDetail) -> Dict[str, Any]:
     if translation is None:
         raise ValueError("ImageDetail must contain translation results")
 
-    warp_data: Dict[str, torch.Tensor] = {}
+    warp_data: dict[str, torch.Tensor] = {}
     for key in WarpParams.Keys.PARAMS:
         tensor = warp.get(key, default=None)
         if tensor is not None:
             warp_data[key] = tensor.detach().clone()
 
-    translation_data: Dict[str, torch.Tensor] = {
+    translation_data: dict[str, torch.Tensor] = {
         TranslationResults.Keys.X: translation.tx.detach().clone(),
         TranslationResults.Keys.Y: translation.ty.detach().clone(),
         TranslationResults.Keys.SCORE: translation.score.detach().clone(),
@@ -310,9 +310,9 @@ def serialize_search_result_gpu(detail: ImageDetail) -> Dict[str, Any]:
 
 
 def deserialize_search_result_gpu(
-    data: Dict[str, Any],
-    device: Optional[Union[str, torch.device]] = None,
-    dtype: Optional[torch.dtype] = None,
+    data: dict[str, Any],
+    device: str | torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> ImageDetail:
     if device is None:
         device = data.get("device", "cpu")
@@ -321,13 +321,13 @@ def deserialize_search_result_gpu(
 
     batch_size = data["batch_size"]
 
-    warp_tensors: Dict[str, torch.Tensor] = {}
+    warp_tensors: dict[str, torch.Tensor] = {}
     for key, tensor in data["warp"].items():
         warp_tensors[key] = tensor.to(device=device, dtype=dtype)
 
     warp = WarpParams(warp_tensors, batch_size=[batch_size])
 
-    trans_tensors: Dict[str, torch.Tensor] = {}
+    trans_tensors: dict[str, torch.Tensor] = {}
     for key, tensor in data["translation"].items():
         trans_tensors[key] = tensor.to(device=device, dtype=dtype)
 
@@ -348,11 +348,11 @@ def deserialize_search_result_gpu(
 
 
 def merge_top_k_results(
-    results: List[ImageDetail],
+    results: list[ImageDetail],
     k: int,
     *,
-    device: Optional[Union[str, torch.device]] = None,
-    dtype: Optional[torch.dtype] = None,
+    device: str | torch.device | None = None,
+    dtype: torch.dtype | None = None,
 ) -> ImageDetail:
     if not results:
         raise ValueError("results list cannot be empty")
@@ -395,7 +395,7 @@ def _get_mpi():
         ) from e
 
 
-def _detect_mpi_world_size() -> Optional[int]:
+def _detect_mpi_world_size() -> int | None:
     env_vars = (
         "OMPI_COMM_WORLD_SIZE",  # OpenMPI
         "PMI_SIZE",  # MPICH/PMI
@@ -457,7 +457,7 @@ def gather_results(
     local_result: ImageDetail,
     comm: Any,
     root: int = 0,
-) -> Optional[List[ImageDetail]]:
+) -> list[ImageDetail] | None:
     _get_mpi()
 
     serialized = serialize_search_result(local_result)
@@ -477,7 +477,7 @@ def gather_results(
 def allgather_results(
     local_result: ImageDetail,
     comm: Any,
-) -> List[ImageDetail]:
+) -> list[ImageDetail]:
     _get_mpi()
 
     serialized = serialize_search_result(local_result)
@@ -495,7 +495,7 @@ def gather_results_gpu(
     local_result: ImageDetail,
     comm: Any,
     root: int = 0,
-) -> Optional[List[ImageDetail]]:
+) -> list[ImageDetail] | None:
     _get_mpi()
 
     serialized = serialize_search_result_gpu(local_result)
@@ -515,7 +515,7 @@ def gather_results_gpu(
 def allgather_results_gpu(
     local_result: ImageDetail,
     comm: Any,
-) -> List[ImageDetail]:
+) -> list[ImageDetail]:
     _get_mpi()
 
     serialized = serialize_search_result_gpu(local_result)
@@ -534,7 +534,7 @@ def reduce_top_k(
     k: int,
     comm: Any,
     root: int = 0,
-) -> Optional[ImageDetail]:
+) -> ImageDetail | None:
     all_results = gather_results(local_result, comm, root=root)
 
     if comm.Get_rank() == root:
@@ -555,7 +555,7 @@ def reduce_top_k_gpu(
     k: int,
     comm: Any,
     root: int = 0,
-) -> Optional[ImageDetail]:
+) -> ImageDetail | None:
     all_results = gather_results_gpu(local_result, comm, root=root)
 
     if comm.Get_rank() == root:
@@ -577,8 +577,8 @@ class MPIExhaustiveWarpSearch(ExhaustiveWarpSearch):
     def __init__(
         self,
         search_params: SearchParams,
-        config: Optional[ExhaustiveSearchConfig] = None,
-        mpi_config: Optional[MPIExhaustiveSearchConfig] = None,
+        config: ExhaustiveSearchConfig | None = None,
+        mpi_config: MPIExhaustiveSearchConfig | None = None,
         *,
         dtype: torch.dtype = torch.float32,
     ):
@@ -625,11 +625,11 @@ class MPIExhaustiveWarpSearch(ExhaustiveWarpSearch):
         reference: ImageDetail,
         moving: ImageDetail,
         *,
-        top_k: Optional[int] = None,
-        progress: Union[bool, None] = None,
-        callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+        top_k: int | None = None,
+        progress: bool | None = None,
+        callback: Callable[[dict[str, Any]], None] | None = None,
         clone_inputs: bool = True,
-    ) -> Optional[ImageDetail]:
+    ) -> ImageDetail | None:
         if top_k is None:
             top_k = self.mpi_config.top_k
 
@@ -652,8 +652,8 @@ class MPIExhaustiveWarpSearch(ExhaustiveWarpSearch):
                 self.comm,
             )
 
-        local_error: Optional[Exception] = None
-        local_result: Optional[ImageDetail] = None
+        local_error: Exception | None = None
+        local_result: ImageDetail | None = None
 
         local_top_k = (
             min(top_k * 2, self.grid.total_count)
@@ -705,7 +705,7 @@ def mpi_exhaustive_search(
     return_on_all_ranks: bool = False,
     validate_inputs: bool = True,
     gpu_aware_mpi: bool = False,
-) -> Optional[ImageDetail]:
+) -> ImageDetail | None:
     mpi_config = MPIExhaustiveSearchConfig(
         top_k=top_k,
         comm=comm,

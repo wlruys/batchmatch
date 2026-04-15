@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple, Union
+from typing import Any, Callable, Sequence
 
 import torch
 
@@ -180,7 +180,7 @@ class AxisGroup(Enum):
     SHEAR = "shear"
 
 
-IterationOrder = Tuple[AxisGroup, AxisGroup, AxisGroup]
+IterationOrder = tuple[AxisGroup, AxisGroup, AxisGroup]
 DEFAULT_ORDER: IterationOrder = (AxisGroup.ANGLE, AxisGroup.SCALE, AxisGroup.SHEAR)
 
 def _validate_order(order: IterationOrder) -> None:
@@ -206,8 +206,8 @@ def _get_partition_axis(order: IterationOrder) -> str:
 
 def make_angle_predicate(
     *,
-    min_angle: Optional[float] = None,
-    max_angle: Optional[float] = None,
+    min_angle: float | None = None,
+    max_angle: float | None = None,
 ) -> Callable[[float], bool]:
     """
     Create a predicate that filters rotation angles.
@@ -230,8 +230,8 @@ def make_angle_predicate(
 
 def make_scale_predicate(
     *,
-    max_anisotropy: Optional[float] = 1.1,
-    area_bounds: Optional[Tuple[float, float]] = None,
+    max_anisotropy: float | None = 1.1,
+    area_bounds: tuple[float, float] | None = None,
 ) -> Callable[[float, float], bool]:
     """
     Create a predicate that filters scale combinations.
@@ -317,8 +317,8 @@ def make_scale_predicate(
 
 def make_shear_predicate(
     *,
-    max_abs: Optional[float] = None,
-    max_l2: Optional[float] = None,
+    max_abs: float | None = None,
+    max_l2: float | None = None,
 ) -> Callable[[float, float], bool]:
     """
     Create a predicate that filters shear combinations.
@@ -431,7 +431,7 @@ class GridAP:
             raise ValueError(f"Unknown axis: {axis}")
         return mapping[axis]
     
-    def get_group_axes(self, group: AxisGroup) -> Tuple[str, ...]:
+    def get_group_axes(self, group: AxisGroup) -> tuple[str, ...]:
         if group == AxisGroup.ANGLE:
             return ("angle",)
         elif group == AxisGroup.SCALE:
@@ -453,7 +453,7 @@ class GridAP:
 
 
 
-def _compute_block(total: int, world_size: int, rank: int) -> Tuple[int, int]:
+def _compute_block(total: int, world_size: int, rank: int) -> tuple[int, int]:
     """
     - Each process gets either floor(total/world_size) or ceil(total/world_size) items
     - The first (total % world_size) processes get the extra item
@@ -559,23 +559,23 @@ def grid_for_rank(
 class ExhaustiveSearchConfig:
     batch_size: int = 64
     auto_batch_size: bool = False
-    max_auto_batch_size: Optional[int] = None
+    max_auto_batch_size: int | None = None
 
     translation_method: str = "pc"
-    translation_params: Dict[str, Any] = field(default_factory=dict)
+    translation_params: dict[str, Any] = field(default_factory=dict)
 
     gradient_method: str = "cd"
-    gradient_params: Dict[str, Any] | None = None
+    gradient_params: dict[str, Any] | None = None
 
     progress_enabled: bool = True
     progress_transient: bool = False
-    device: Union[str, torch.device] = "cpu"
+    device: str | torch.device = "cpu"
 
     use_reference_cache: bool = False
     use_moving_cache: bool = False
 
-    translation: Optional[Any] = None  # TranslationConfig
-    gradient: Optional[Any] = None  # GradientPipelineConfig | GradientMethodConfig
+    translation: Any | None = None  # TranslationConfig
+    gradient: Any | None = None  # GradientPipelineConfig | GradientMethodConfig
 
     def __post_init__(self):
         if self.translation is not None:
@@ -603,16 +603,16 @@ class ExhaustiveSearchConfig:
 @dataclass
 class PredicateConfig:
     # Angle constraints (None = no constraint)
-    angle_min: Optional[float] = None
-    angle_max: Optional[float] = None
+    angle_min: float | None = None
+    angle_max: float | None = None
 
     # Scale constraints
     max_anisotropy: float = 1.1
-    area_bounds: Optional[Tuple[float, float]] = None
+    area_bounds: tuple[float, float] | None = None
 
     # Shear constraints
-    max_shear_abs: Optional[float] = None
-    max_shear_l2: Optional[float] = None
+    max_shear_abs: float | None = None
+    max_shear_l2: float | None = None
 
     def build_angle_predicate(self) -> Callable[[float], bool]:
         """Build angle predicate from config."""
@@ -637,7 +637,7 @@ class PredicateConfig:
 
     def build_all(
         self,
-    ) -> Tuple[
+    ) -> tuple[
         Callable[[float], bool],
         Callable[[float, float], bool],
         Callable[[float, float], bool],
