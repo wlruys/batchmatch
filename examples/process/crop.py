@@ -14,7 +14,6 @@ from pathlib import Path
 
 import torch
 
-from batchmatch.base import build_image_td
 from batchmatch.io import ImageIO
 from batchmatch.process.crop import RandomCropStage
 from batchmatch.view.config import DisplaySpec, GallerySpec, ImageViewSpec
@@ -48,8 +47,7 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    img = ImageIO(grayscale=True).load(args.image)
-    detail = build_image_td(img).repeat(args.num_crops)
+    detail = ImageIO(grayscale=True).load(args.image).detail.repeat(args.num_crops)
 
     min_side = min(detail.H, detail.W)
     min_crop = max(8, min_side // 4)

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import torch
 
+from batchmatch import auto_device
 from batchmatch.base import build_image_td
 from batchmatch.metric import ImageMetricSpec, cross_correlation
 from batchmatch.optimize import AffineWarpOptimize, MetricConfig, OptimizeConfig, OptimizerConfig
@@ -26,7 +27,7 @@ def make_gaussian_mixture(size: int = 256, n_gaussians: int = 5, seed: int = 0) 
 
 
 def main(metric: str = "ncc", iterations: int = 200, show: bool = True) -> None:
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    device = auto_device("auto")
     gt_angle, gt_tx, gt_ty = 8.0, 10.0, -6.0
 
     reference_img = make_gaussian_mixture(size=256, seed=42).to(device)

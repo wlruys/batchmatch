@@ -21,6 +21,7 @@ classifiers = [
 dependencies = [
     "frozendict>=2.4.7",
     "hydra-core>=1.3.2",
+    "imagecodecs>=2025.3.30",
     "matplotlib>=3.8",
     "numpy>=1.26",
     "pillow>=10.0",
@@ -28,9 +29,11 @@ dependencies = [
     "scikit-image>=0.22",
     "scipy>=1.11",
     "tensordict>=0.4",
+    "tifffile>=2024.1",
     "torch>=2.3",
     "torchvision>=0.18",
     "typing-extensions>=4.9",
+    "zarr>=2.17",
 ]
 
 [project.optional-dependencies]
@@ -44,7 +47,10 @@ all = ["batchmatch[dev,mpi]"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["cuda: marks tests requiring CUDA"]
+markers = [
+    "cuda: marks tests requiring CUDA",
+    "mps: marks tests requiring MPS (Apple Silicon)",
+]
 
 [tool.setuptools]
 package-dir = { "" = "src" }

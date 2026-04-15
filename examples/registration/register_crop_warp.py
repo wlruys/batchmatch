@@ -3,6 +3,7 @@ from pathlib import Path
 import torch
 import torch.nn.functional as F
 
+from batchmatch import auto_device
 from batchmatch.base import ImageDetail, build_image_td
 from batchmatch.io import ImageIO, ProductIO
 from batchmatch.process.crop import RandomCropStage
@@ -29,20 +30,8 @@ from batchmatch.view.display import show_comparison
 from batchmatch.warp import WarpPipelineConfig, build_warp_pipeline
 
 
-def _auto_device(device_str: str) -> torch.device:
-    if device_str == "auto":
-        if torch.cuda.is_available():
-            return torch.device("cuda")
-        elif torch.backends.mps.is_available():
-            return torch.device("mps")
-        else:
-            return torch.device("cpu")
-    else:
-        return torch.device(device_str)
-
 def main() -> None:
-    img = ImageIO(grayscale=True).load("img/test.jpg")
-    reference = build_image_td(img)
+    reference = ImageIO(grayscale=True).load("img/test.jpg").detail
 
 
     #Build random moving image by cropping from reference
@@ -121,7 +110,7 @@ def main() -> None:
     )
     search = ExhaustiveWarpSearch(search_params, config)
         
-    device = _auto_device("auto")
+    device = auto_device("auto")
 
     reference_lowres = reference_lowres.to(device)
     moving_lowres = moving_lowres.to(device)

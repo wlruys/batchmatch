@@ -7,6 +7,7 @@ from pathlib import Path
 
 import torch
 
+from batchmatch import auto_device
 from batchmatch.base import ImageDetail, build_image_td
 from batchmatch.io import ImageIO, ProductIO
 from batchmatch.process.cells import CellSizeCfg
@@ -114,16 +115,6 @@ def parse_image_from_selection(selection: int) -> tuple[Path, Path]:
     return moving_path, reference_path
 
 
-def auto_device(device: str) -> torch.device:
-    if device != "auto":
-        return torch.device(device)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
-
-
 def str_to_translation_config(metric: str):
     if metric == "ncc":
         return NCCTranslationConfig()
@@ -175,12 +166,10 @@ def main() -> None:
 
     moving_path, reference_path = parse_image_from_selection(args.selection)
 
-    img = ImageIO(grayscale=True).load(reference_path)
-    reference = build_image_td(img)
+    reference = ImageIO(grayscale=True).load(reference_path).detail
     reference_base = reference.clone()
 
-    img = ImageIO(grayscale=True).load(moving_path)
-    moving = build_image_td(img)
+    moving = ImageIO(grayscale=True).load(moving_path).detail
     moving_base = moving.clone()
 
     log(f"Loaded selection {args.selection}")
