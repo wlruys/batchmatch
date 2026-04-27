@@ -78,9 +78,6 @@ def render_mask(
         raise ValueError(f"Unknown mask mode: {spec.mode}")
 
 
-# ---------------------------------------------------------------------------
-# Shared helpers for overlay rendering
-# ---------------------------------------------------------------------------
 
 def _prepare_mask(mask: Tensor, invert: bool) -> Tensor:
     """Convert mask to single-channel CHW float, optionally inverted."""
@@ -173,10 +170,6 @@ def _apply_mask_to_rgb(
 
     raise ValueError(f"Unknown mask mode: {spec.mask_spec.mode}")
 
-
-# ---------------------------------------------------------------------------
-# Public overlay functions
-# ---------------------------------------------------------------------------
 
 def render_mask_overlay(
     detail: ImageDetail,

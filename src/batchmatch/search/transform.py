@@ -212,25 +212,15 @@ class RegistrationTransform:
         tx = _scalar(tr.tx, candidate_idx)
         ty = _scalar(tr.ty, candidate_idx)
         # Search-space point transform from moving to reference.
-        # The legacy product path warps moving via grid_sample(M_fwd)
-        # (sampling matrix: output→input) then shifts by (-tx, -ty).
-        # The total sampling matrix is M_fwd @ T(-tx,-ty).  Inverting:
-        #   ref_point = T(tx, ty) @ inv(M_fwd) @ mov_point
         M_ref_search_from_mov_search = _shift_matrix(tx, ty) @ mat_inv(
             warp_fwd_search
         )
-
-        # ---- Full-resolution transform via matrix_image_from_source ----
         # Each SpatialImage's space.matrix_image_from_source encodes the
         # full chain (pyramid → crop → downsample → spatial stages like
         # resize and center-padding) from source (full-res) pixels to the
-        # search canvas pixels.  The correct full-res transform is:
+        # search canvas pixels.  The full-res transform is:
         #
         #   p_ref_full = inv(M_ref_src2canvas) @ M_search @ M_mov_src2canvas @ p_mov_full
-        #
-        # This naturally handles different padding, scaling, and canvas
-        # geometry without needing to rescale warp centres or invent a
-        # separate full-resolution canvas.
         M_mov_src2canvas = moving.space.matrix_image_from_source.astype(np.float64)
         M_ref_src2canvas = reference.space.matrix_image_from_source.astype(np.float64)
         M_ref_full_from_mov_full = (

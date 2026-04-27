@@ -20,10 +20,6 @@ crop_registry = StageRegistry("crop")
 _CROP_OUTPUTS = {"image", "mask", "window", "gx", "gy", "box", "quad", "points"}
 
 
-# ---------------------------------------------------------------------------
-# Shared utilities (also imported by pad.py and builders.py)
-# ---------------------------------------------------------------------------
-
 def _normalize_stage_outputs(
     outputs: Optional[Sequence[str]],
     valid: set[str],
@@ -56,10 +52,6 @@ def _normalize_crop_outputs(outputs: Optional[Sequence[str]]) -> Optional[set[st
     return _normalize_stage_outputs(outputs, _CROP_OUTPUTS)
 
 
-# ---------------------------------------------------------------------------
-# Free functions
-# ---------------------------------------------------------------------------
-
 def crop_spatial_to_box(tensor: Tensor, box: Tensor) -> Tensor:
     x0, y0, x1, y1 = box.round().int().tolist()
     return tensor[:, :, y0:y1, x0:x1]
@@ -90,10 +82,6 @@ def _normalize_size(
         return value
     raise ValueError("size must be an int or a tuple of (height, width).")
 
-
-# ---------------------------------------------------------------------------
-# CropStageBase — shared key setup, tensor cropping, and forward loop
-# ---------------------------------------------------------------------------
 
 class CropStageBase(Stage):
     DEFAULT_IMAGE_KEY: NestedKey = ImageDetail.Keys.IMAGE
@@ -299,10 +287,6 @@ class CropStageBase(Stage):
         return output_details
 
 
-# ---------------------------------------------------------------------------
-# RandomCropStage
-# ---------------------------------------------------------------------------
-
 @crop_registry.register("crop_random")
 class RandomCropStage(CropStageBase):
     """
@@ -491,10 +475,6 @@ class RandomCropStage(CropStageBase):
 
         return output_details
 
-
-# ---------------------------------------------------------------------------
-# Mask-based crop stages
-# ---------------------------------------------------------------------------
 
 @crop_registry.register("crop_union")
 class CropUnionStage(CropStageBase):

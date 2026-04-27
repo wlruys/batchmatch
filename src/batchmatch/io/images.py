@@ -97,10 +97,6 @@ _RASTER_EXTENSIONS = _JPEG_EXTENSIONS | _PNG_BMP_EXTENSIONS
 _SUPPORTED_EXTENSIONS = _TIFF_EXTENSIONS | _RASTER_EXTENSIONS
 
 
-# ---------------------------------------------------------------------------
-# Policy / options
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class ImagePolicy:
@@ -285,12 +281,6 @@ class PreviewConfig:
     overwrite: bool = False
     max_size: Optional[int] = None
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
 def _coerce_region(region: RegionLike) -> Optional[RegionYXHW]:
     if region is None:
         return None
@@ -351,11 +341,6 @@ def _source_info_from_tiff(
         physical_extent_xy=phys_extent,
         format=_tiff_format(tif),
     )
-
-
-# ---------------------------------------------------------------------------
-# Source backends
-# ---------------------------------------------------------------------------
 
 
 class ImageSource(ABC):
@@ -620,10 +605,6 @@ class RasterSource(ImageSource):
         return np.ascontiguousarray(arr), "CYX", selection, 0
 
 
-# ---------------------------------------------------------------------------
-# Facade
-# ---------------------------------------------------------------------------
-
 
 _SOURCE_BACKENDS: dict[frozenset[str], type[ImageSource]] = {
     _TIFF_EXTENSIONS: TiffSource,
@@ -860,10 +841,6 @@ class ImageIO:
         return pathify(path).exists()
 
 
-# ---------------------------------------------------------------------------
-# Module-level convenience API
-# ---------------------------------------------------------------------------
-
 
 def load_image(
     path: PathLike,
@@ -935,11 +912,6 @@ def save_preview(
     Convenience wrapper around ``ImageIO().save_preview(...)``.
     """
     return ImageIO().save_preview(image, path, config=config)
-
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 
 def _coerce_tensor(image: Union[Tensor, SpatialImage, object]) -> Tensor:

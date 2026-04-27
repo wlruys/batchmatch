@@ -189,10 +189,6 @@ def multilevel_scale_resize(
     final = target_resize(x, target_h, is_mask=is_mask, mode="bilinear", target_dim=0)[0]
     return final, (h, w)
 
-# ---------------------------------------------------------------------------
-# Shared key / output initialisation
-# ---------------------------------------------------------------------------
-
 
 def _init_resize_output_keys(
     stage: Stage,
@@ -269,10 +265,6 @@ def _init_resize_output_keys(
     stage.requires = frozenset(reqs)
     stage.sets = frozenset(reqs)
 
-
-# ---------------------------------------------------------------------------
-# Per-key scaling helpers (used by both ScaleResize and UnitResize)
-# ---------------------------------------------------------------------------
 
 
 def _scale_image_key(
@@ -381,11 +373,6 @@ def _apply_scale_to_detail(
         for key in stage.translation_keys:
             _scale_translation_key(detail, key, sx, sy)
     return detail
-
-
-# ---------------------------------------------------------------------------
-# Stages
-# ---------------------------------------------------------------------------
 
 
 @resize_registry.register("scale_resize")

@@ -18,11 +18,6 @@ __all__ = [
     "render_side_by_side",
 ]
 
-
-# ---------------------------------------------------------------------------
-# Shared helpers
-# ---------------------------------------------------------------------------
-
 def _get_edges_from_detail(detail: ImageDetail, fallback_img: Tensor = None) -> Tensor:
     """Compute normalized edge magnitude from an ImageDetail.
 

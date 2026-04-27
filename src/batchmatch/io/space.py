@@ -33,10 +33,6 @@ __all__ = [
 SourceFormat = Literal["ome-tiff", "imagej-tiff", "tiff", "raster"]
 
 
-# ---------------------------------------------------------------------------
-# Region / padding
-# ---------------------------------------------------------------------------
-
 
 @dataclass(frozen=True)
 class RegionYXHW:
@@ -130,11 +126,6 @@ class PaddingLTRB:
     def as_torch_pad(self) -> tuple[int, int, int, int]:
         """Order expected by ``torch.nn.functional.pad``: (left, right, top, bottom)."""
         return (int(self.left), int(self.right), int(self.top), int(self.bottom))
-
-
-# ---------------------------------------------------------------------------
-# Source info
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)

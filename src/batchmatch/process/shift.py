@@ -19,10 +19,6 @@ shift_registry = StageRegistry("shift")
 OffsetSource = Literal["warp", "translation"]
 
 
-# ---------------------------------------------------------------------------
-# Free functions
-# ---------------------------------------------------------------------------
-
 def get_translation_offsets(
     image: ImageDetail,
     source: OffsetSource,
@@ -108,11 +104,6 @@ def shift_spatial_batch(
                 tensor[b, :, src_y_start:src_y_end, src_x_start:src_x_end]
 
     return out
-
-
-# ---------------------------------------------------------------------------
-# ShiftStage — integer pixel shift
-# ---------------------------------------------------------------------------
 
 @shift_registry.register("shift")
 class ShiftStage(Stage):
@@ -228,10 +219,6 @@ class ShiftStage(Stage):
             return images[0]
 
 
-# ---------------------------------------------------------------------------
-# SubpixelShiftStage — sub-pixel translation via warp pipeline
-# ---------------------------------------------------------------------------
-
 @shift_registry.register("subpixel")
 class SubpixelShiftStage(Stage):
     """Apply sub-pixel translation using bilinear interpolation."""
@@ -303,10 +290,6 @@ class SubpixelShiftStage(Stage):
 
         return self._get_warp_pipeline()(image)
 
-
-# ---------------------------------------------------------------------------
-# Builder helpers
-# ---------------------------------------------------------------------------
 
 def build_shift_stage(name: str = "shift", **kwargs) -> Stage:
     return shift_registry.build(name, **kwargs)
