@@ -16,6 +16,34 @@ from batchmatch.helpers.tensor import shift_points
 
 shift_registry = StageRegistry("shift")
 
+OffsetSource = Literal["warp", "translation"]
+
+
+def get_translation_offsets(
+    image: ImageDetail,
+    source: OffsetSource,
+    negate: bool = False,
+) -> tuple[Tensor, Tensor]:
+    """Read (tx, ty) from *image* according to *source*, optionally negated."""
+    if source == "warp":
+        tx = image.get(ImageDetail.Keys.WARP.TX, None)
+        ty = image.get(ImageDetail.Keys.WARP.TY, None)
+        if tx is None or ty is None:
+            raise ValueError("WarpParams tx/ty not found in ImageDetail")
+    elif source == "translation":
+        tx = image.get(ImageDetail.Keys.TRANSLATION.X, None)
+        ty = image.get(ImageDetail.Keys.TRANSLATION.Y, None)
+        if tx is None or ty is None:
+            raise ValueError("TranslationResults x/y not found in ImageDetail")
+    else:
+        raise ValueError(f"Unknown offset source: {source}")
+
+    if negate:
+        tx = -tx
+        ty = -ty
+
+    return tx, ty
+
 
 def shift_spatial_batch(
     tensor: Tensor,
@@ -25,12 +53,11 @@ def shift_spatial_batch(
     fill_value: float = 0.0,
 ) -> Tensor:
     B, C, H, W = tensor.shape
-    device = tensor.device
-    dtype = tensor.dtype
 
     dx_int = dx.round().to(torch.int64)
     dy_int = dy.round().to(torch.int64)
 
+    # Fast path: uniform shift across batch
     if (dx_int == dx_int[0]).all() and (dy_int == dy_int[0]).all():
         shift_x = int(dx_int[0].item())
         shift_y = int(dy_int[0].item())
@@ -51,6 +78,7 @@ def shift_spatial_batch(
 
         return out
 
+    # Per-element shift
     out = torch.full_like(tensor, fill_value)
 
     for b in range(B):
@@ -61,8 +89,6 @@ def shift_spatial_batch(
             out[b] = tensor[b]
             continue
 
-        # Positive shift moves right/down
-        # source is left/top
         src_y_start = max(0, -sy)
         src_y_end = min(H, H - sy)
         src_x_start = max(0, -sx)
@@ -78,10 +104,6 @@ def shift_spatial_batch(
                 tensor[b, :, src_y_start:src_y_end, src_x_start:src_x_end]
 
     return out
-
-
-OffsetSource = Literal["warp", "translation"]
-
 
 @shift_registry.register("shift")
 class ShiftStage(Stage):
@@ -132,26 +154,6 @@ class ShiftStage(Stage):
         self._quad_key = quad_key if quad_key is not None else (self.DEFAULT_QUAD_KEY if shift_quad else None)
         self._points_key = points_key if points_key is not None else (self.DEFAULT_POINTS_KEY if shift_points else None)
 
-    def _get_offsets(self, image: ImageDetail) -> tuple[Tensor, Tensor]:
-        if self._source == "warp":
-            tx = image.get(ImageDetail.Keys.WARP.TX, None)
-            ty = image.get(ImageDetail.Keys.WARP.TY, None)
-            if tx is None or ty is None:
-                raise ValueError("WarpParams tx/ty not found in ImageDetail")
-        elif self._source == "translation":
-            tx = image.get(ImageDetail.Keys.TRANSLATION.X, None)
-            ty = image.get(ImageDetail.Keys.TRANSLATION.Y, None)
-            if tx is None or ty is None:
-                raise ValueError("TranslationResults x/y not found in ImageDetail")
-        else:
-            raise ValueError(f"Unknown offset source: {self._source}")
-
-        if self._negate:
-            tx = -tx
-            ty = -ty
-
-        return tx, ty
-
     def _shift_spatial(self, image: ImageDetail, key: Optional[NestedKey], tx: Tensor, ty: Tensor):
         if key is None:
             return
@@ -167,8 +169,7 @@ class ShiftStage(Stage):
         boxes = image.get(key, None)
         if boxes is None:
             return
-        shifted = shift_xyxy_batch(boxes, dx=tx, dy=ty)
-        image.set(key, shifted)
+        image.set(key, shift_xyxy_batch(boxes, dx=tx, dy=ty))
 
     def _shift_quad(self, image: ImageDetail, key: Optional[NestedKey], tx: Tensor, ty: Tensor):
         if key is None:
@@ -176,8 +177,7 @@ class ShiftStage(Stage):
         quads = image.get(key, None)
         if quads is None:
             return
-        shifted = shift_quad_batch(quads, dx=tx, dy=ty)
-        image.set(key, shifted)
+        image.set(key, shift_quad_batch(quads, dx=tx, dy=ty))
 
     def _shift_points(self, image: ImageDetail, key: Optional[NestedKey], tx: Tensor, ty: Tensor):
         if key is None:
@@ -185,8 +185,7 @@ class ShiftStage(Stage):
         points = image.get(key, None)
         if points is None:
             return
-        shifted = shift_points(points, dx=tx, dy=ty)
-        image.set(key, shifted)
+        image.set(key, shift_points(points, dx=tx, dy=ty))
 
     def forward(
         self,
@@ -202,7 +201,7 @@ class ShiftStage(Stage):
             images = [image]
 
         for img in images:
-            tx, ty = self._get_offsets(img)
+            tx, ty = get_translation_offsets(img, self._source, self._negate)
 
             self._shift_spatial(img, self._image_key, tx, ty)
             self._shift_spatial(img, self._mask_key, tx, ty)
@@ -222,9 +221,7 @@ class ShiftStage(Stage):
 
 @shift_registry.register("subpixel")
 class SubpixelShiftStage(Stage):
-    """
-    Apply sub-pixel translation using bilinear interpolation.
-    """
+    """Apply sub-pixel translation using bilinear interpolation."""
 
     _auto_validate: bool = False
     _auto_invalidate: bool = False
@@ -246,44 +243,40 @@ class SubpixelShiftStage(Stage):
         super().__init__()
         self._source = source
         self._negate = negate
-        self._shift_image = shift_image
-        self._shift_mask = shift_mask
-        self._shift_window = shift_window
-        self._shift_box = shift_box
-        self._shift_quad = shift_quad
-        self._shift_points = shift_points
         self._mode = mode
         self._fill_value = fill_value
 
-    def _get_offsets(self, image: ImageDetail) -> tuple[Tensor, Tensor]:
-        if self._source == "warp":
-            tx = image.get(ImageDetail.Keys.WARP.TX, None)
-            ty = image.get(ImageDetail.Keys.WARP.TY, None)
-            if tx is None or ty is None:
-                raise ValueError("WarpParams tx/ty not found in ImageDetail")
-        elif self._source == "translation":
-            tx = image.get(ImageDetail.Keys.TRANSLATION.X, None)
-            ty = image.get(ImageDetail.Keys.TRANSLATION.Y, None)
-            if tx is None or ty is None:
-                raise ValueError("TranslationResults x/y not found in ImageDetail")
-        else:
-            raise ValueError(f"Unknown offset source: {self._source}")
+        # Build the warp spec once from the boolean flags.
+        # The warp pipeline is constructed lazily on first forward call so the
+        # import of batchmatch.warp is deferred.
+        warp_spec: dict = {"prepare": {"type": "prepare"}}
+        if shift_image:
+            warp_spec["image"] = {"type": "image", "fill_value": fill_value, "mode": mode}
+        if shift_mask:
+            warp_spec["mask"] = {"type": "mask", "fill_value": fill_value}
+        if shift_window:
+            warp_spec["window"] = {"type": "window", "fill_value": fill_value, "mode": mode}
+        if shift_box:
+            warp_spec["boxes"] = {"type": "boxes"}
+        if shift_quad:
+            warp_spec["quad"] = {"type": "quad"}
+        if shift_points:
+            warp_spec["points"] = {"type": "points"}
+        self._warp_spec = warp_spec
+        self._warp_pipeline: Pipeline | None = None
 
-        if self._negate:
-            tx = -tx
-            ty = -ty
-
-        return tx, ty
+    def _get_warp_pipeline(self) -> Pipeline:
+        if self._warp_pipeline is None:
+            from batchmatch.warp.base import build_warp_pipeline
+            self._warp_pipeline = build_warp_pipeline(self._warp_spec)
+        return self._warp_pipeline
 
     def forward(self, image: ImageDetail) -> ImageDetail:
-        from batchmatch.warp.base import build_warp_pipeline
-
-        tx, ty = self._get_offsets(image)
+        tx, ty = get_translation_offsets(image, self._source, self._negate)
         device = image.image.device
         dtype = image.image.dtype
         B = image.B
 
-        # Create identity warp with just translation
         warp_params = WarpParams.from_components(
             angle=torch.zeros(B, device=device, dtype=dtype),
             scale_x=torch.ones(B, device=device, dtype=dtype),
@@ -295,26 +288,7 @@ class SubpixelShiftStage(Stage):
         )
         image.set(ImageDetail.Keys.WARP.ROOT, warp_params)
 
-        # Build warp pipeline only for components that exist
-        warp_spec: dict = {"prepare": {"type": "prepare"}}
-        #TODO(wlr): This is too expensize, we should only build the warp spec once, but okay for now
-        #Note if we need this in an optimization loop this will be very slow
-
-        if self._shift_image and image.get(ImageDetail.Keys.IMAGE, default=None) is not None:
-            warp_spec["image"] = {"type": "image", "fill_value": self._fill_value, "mode": self._mode}
-        if self._shift_mask and image.get(ImageDetail.Keys.DOMAIN.MASK, default=None) is not None:
-            warp_spec["mask"] = {"type": "mask", "fill_value": self._fill_value}
-        if self._shift_window and image.get(ImageDetail.Keys.DOMAIN.WINDOW, default=None) is not None:
-            warp_spec["window"] = {"type": "window", "fill_value": self._fill_value, "mode": self._mode}
-        if self._shift_box and image.get(ImageDetail.Keys.DOMAIN.BOX, default=None) is not None:
-            warp_spec["boxes"] = {"type": "boxes"}
-        if self._shift_quad and image.get(ImageDetail.Keys.DOMAIN.QUAD, default=None) is not None:
-            warp_spec["quad"] = {"type": "quad"}
-        if self._shift_points and image.get(ImageDetail.Keys.AUX.POINTS, default=None) is not None:
-            warp_spec["points"] = {"type": "points"}
-
-        warp_pipeline = build_warp_pipeline(warp_spec)
-        return warp_pipeline(image)
+        return self._get_warp_pipeline()(image)
 
 
 def build_shift_stage(name: str = "shift", **kwargs) -> Stage:

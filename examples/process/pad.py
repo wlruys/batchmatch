@@ -12,7 +12,6 @@ import argparse
 import os
 from pathlib import Path
 
-from batchmatch.base import build_image_td
 from batchmatch.io import ImageIO
 from batchmatch.process.pad import build_pad_pipeline
 from batchmatch.view.annotate import annotate_from_detail
@@ -51,9 +50,7 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    img = ImageIO(grayscale=False).load(args.image)
-
-    td = build_image_td(img)
+    td = ImageIO(grayscale=False).load(args.image).detail
 
     pad_pipe = build_pad_pipeline(
         "center_pad",

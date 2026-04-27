@@ -26,73 +26,7 @@ def render_gradient_component(
 ) -> Tensor:
     gx = detail.get(ImageDetail.Keys.GRAD.X)
     gy = detail.get(ImageDetail.Keys.GRAD.Y)
-
-    if spec.normalize_per_image:
-        gx = render.to_bchw(gx)
-        gy = render.to_bchw(gy)
-        if gx.shape[1] > 1:
-            gx = gx[:, :1]
-        if gy.shape[1] > 1:
-            gy = gy[:, :1]
-    else:
-        gx = render.to_chw(gx)
-        gy = render.to_chw(gy)
-        if gx.shape[0] > 1:
-            gx = gx[:1]
-        if gy.shape[0] > 1:
-            gy = gy[:1]
-
-    if component == "x":
-        grad = gx
-        if spec.symmetric_range:
-            grad = render.normalize_symmetric(grad, per_image=spec.normalize_per_image)
-            grad = grad * 0.5 + 0.5
-        else:
-            grad = render.normalize_for_display(
-                grad, spec.normalize, per_image=spec.normalize_per_image
-            )
-        grad = render.to_chw(grad)
-        return render.apply_colormap(grad, spec.signed_colormap)
-
-    elif component == "y":
-        grad = gy
-        if spec.symmetric_range:
-            grad = render.normalize_symmetric(grad, per_image=spec.normalize_per_image)
-            grad = grad * 0.5 + 0.5
-        else:
-            grad = render.normalize_for_display(
-                grad, spec.normalize, per_image=spec.normalize_per_image
-            )
-        grad = render.to_chw(grad)
-        return render.apply_colormap(grad, spec.signed_colormap)
-
-    elif component == "norm":
-        norm = render.gradient_magnitude(gx, gy)
-        norm = render.normalize_for_display(
-            norm, spec.normalize, per_image=spec.normalize_per_image
-        )
-        norm = render.apply_gamma(norm, spec.norm_gamma)
-        norm = render.to_chw(norm)
-        return render.apply_colormap(norm, spec.norm_colormap)
-
-    elif component == "orientation":
-        orientation = render.gradient_orientation(gx, gy)
-        if spec.orientation_as_color:
-            magnitude = render.gradient_magnitude(gx, gy)
-            if spec.normalize_per_image:
-                magnitude = render.normalize_for_display(
-                    magnitude, "minmax", per_image=True
-                )
-            orientation = render.to_chw(orientation)
-            magnitude = render.to_chw(magnitude)
-            return render.orientation_to_rgb(orientation, magnitude)
-        else:
-            orientation_norm = orientation / (2 * math.pi)
-            orientation_norm = render.to_chw(orientation_norm)
-            return render.apply_cyclic_colormap(orientation_norm, spec.orientation_colormap)
-
-    else:
-        raise ValueError(f"Unknown gradient component: {component}")
+    return render_gradient_from_tensors(gx, gy, component, spec)
 
 
 def render_gradient_gallery(
@@ -120,29 +54,7 @@ def render_gradient_with_quiver(
 ) -> Tensor:
     gx = detail.get(ImageDetail.Keys.GRAD.X)
     gy = detail.get(ImageDetail.Keys.GRAD.Y)
-
-    if spec.normalize_per_image:
-        gx = render.to_bchw(gx)
-        gy = render.to_bchw(gy)
-        if gx.shape[1] > 1:
-            gx = gx[:, :1]
-        if gy.shape[1] > 1:
-            gy = gy[:, :1]
-    else:
-        gx = render.to_chw(gx)
-        gy = render.to_chw(gy)
-        if gx.shape[0] > 1:
-            gx = gx[:1]
-        if gy.shape[0] > 1:
-            gy = gy[:1]
-
-    norm = render.gradient_magnitude(gx, gy)
-    norm = render.normalize_for_display(
-        norm, spec.normalize, per_image=spec.normalize_per_image
-    )
-    norm = render.apply_gamma(norm, spec.norm_gamma)
-    norm = render.to_chw(norm)
-    return render.apply_colormap(norm, spec.norm_colormap)
+    return render_gradient_from_tensors(gx, gy, "norm", spec)
 
 
 def get_quiver_data(

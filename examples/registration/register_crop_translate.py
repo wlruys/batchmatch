@@ -25,8 +25,7 @@ from batchmatch.warp import build_warp_pipeline
 def main():
     import matplotlib.pyplot as plt
 
-    img = ImageIO(grayscale=True).load("img/test.jpg")
-    reference = build_image_td(img)
+    reference = ImageIO(grayscale=True).load("img/test.jpg").detail
 
     max_H, max_W = reference.image.shape[-2:]
     min_crop = max_H // 8

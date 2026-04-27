@@ -37,6 +37,7 @@ __all__ = [
     "show_gradient",
     "show_gradients",
     "show_gradient_hsv",
+    "show_channels",
     "show_mask",
     "show_mask_overlay",
     "show_comparison",
@@ -116,18 +117,6 @@ def _finalize_figure(fig, display: DisplaySpec):
         plt.show()
 
 
-def _compute_grid_layout(n: int, nrows: Optional[int], ncols: Optional[int]) -> tuple[int, int]:
-    if nrows and ncols:
-        return nrows, ncols
-    if nrows:
-        return nrows, (n + nrows - 1) // nrows
-    if ncols:
-        return (n + ncols - 1) // ncols, ncols
-    ncols = min(4, n)
-    nrows = (n + ncols - 1) // ncols
-    return nrows, ncols
-
-
 def show_image(
     image: Union[Tensor, ImageDetail],
     spec: ImageViewSpec = ImageViewSpec(),
@@ -138,6 +127,12 @@ def show_image(
         img = image.get(ImageDetail.Keys.IMAGE)
     else:
         img = image
+
+    # Multi-channel: select before normalisation so stats are per-channel
+    img = render.select_channels(img, spec.channel)
+
+    # High-resolution: downsample for display
+    img = render.downsample_for_display(img, spec.max_display_size)
 
     rendered = render.prepare_for_display(
         img,
@@ -194,7 +189,7 @@ def show_images(
     if title is not None:
         display = replace(display, title=title)
 
-    nrows, ncols = _compute_grid_layout(n, spec.nrows, spec.ncols)
+    nrows, ncols = gallery_module._compute_grid_layout(n, spec.nrows, spec.ncols)
     if spec.preserve_relative_size:
         sizes = [_get_image_hw(img) for img in images]
         figsize, row_heights, col_widths = _compute_gallery_figsize(
@@ -319,6 +314,47 @@ def show_gradient_hsv(
     return show_image(rendered, display=display, ax=ax)
 
 
+def show_channels(
+    image: Union[Tensor, ImageDetail],
+    spec: ImageViewSpec = ImageViewSpec(),
+    display: DisplaySpec = DisplaySpec(),
+    *,
+    channels: Sequence[int] | None = None,
+    channel_names: Sequence[str] | None = None,
+):
+    """Show each channel of a multi-channel image as a separate panel.
+
+    Useful for OME-TIFF images where each channel is a different modality.
+    """
+    from dataclasses import replace as dc_replace
+
+    if isinstance(image, ImageDetail):
+        tensor = image.get(ImageDetail.Keys.IMAGE)
+    else:
+        tensor = image
+
+    tensor = render.to_chw(tensor)
+    C = tensor.shape[0]
+
+    if channels is None:
+        channels = list(range(C))
+
+    titles = []
+    for i, ch in enumerate(channels):
+        if channel_names and i < len(channel_names):
+            titles.append(channel_names[i])
+        else:
+            titles.append(f"Ch {ch}")
+
+    per_ch = [tensor[ch : ch + 1] for ch in channels]
+
+    gallery_spec = GallerySpec(
+        nrows=1,
+        image_spec=dc_replace(spec, channel=None),
+        titles=titles,
+    )
+    return show_images(per_ch, gallery_spec, display)
+
 
 def show_mask(
     mask: Union[Tensor, ImageDetail],
@@ -401,6 +437,8 @@ def show_annotated(
     ax=None,
 ):
     img = detail.get(ImageDetail.Keys.IMAGE)
+    img = render.select_channels(img, image_spec.channel)
+    img = render.downsample_for_display(img, image_spec.max_display_size)
     rendered = render.prepare_for_display(
         img,
         image_spec.normalize,
@@ -414,7 +452,7 @@ def show_annotated(
     rendered = render.to_rgb(rendered)
 
     annotated = annotate.annotate_from_detail(
-        rendered, detail, quad_spec, box_spec, point_spec
+        detail, quad_spec, box_spec, point_spec, image=rendered
     )
 
     fig, ax = _get_figure_axes(ax, display)

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import math
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn.functional as F
@@ -20,6 +20,8 @@ __all__ = [
     "to_uint8",
     "to_chw",
     "to_bchw",
+    "select_channels",
+    "downsample_for_display",
     "apply_colormap",
     "apply_cyclic_colormap",
     "blend_alpha",
@@ -57,8 +59,16 @@ def normalize_percentile(
     high: float = 98.0,
 ) -> Tensor:
     flat = image.reshape(-1)
-    low_val = torch.quantile(flat, low / 100.0)
-    high_val = torch.quantile(flat, high / 100.0)
+    # torch.quantile has a practical element limit (~2^24); subsample when
+    # the tensor is too large.
+    _MAX_QUANTILE_ELEMS = 2**24
+    if flat.numel() > _MAX_QUANTILE_ELEMS:
+        indices = torch.randint(0, flat.numel(), (_MAX_QUANTILE_ELEMS,), device=flat.device)
+        sample = flat[indices]
+    else:
+        sample = flat
+    low_val = torch.quantile(sample, low / 100.0)
+    high_val = torch.quantile(sample, high / 100.0)
     out = (image - low_val) / (high_val - low_val + 1e-8)
     return out.clamp(0, 1)
 
@@ -166,11 +176,93 @@ def to_rgb(image: Tensor) -> Tensor:
     C = image.shape[0]
     if C == 1:
         return image.expand(3, -1, -1)
+    if C == 2:
+        # Pad with a zero channel so 2-channel images can still be viewed.
+        return torch.cat(
+            [image, torch.zeros_like(image[:1])], dim=0
+        )
     if C == 3:
         return image
     if C > 3:
         return image[:3]
     raise ValueError(f"Cannot convert {C}-channel image to RGB")
+
+
+ChannelSelection = Union[int, Tuple[int, ...]]
+
+
+def select_channels(
+    image: Tensor,
+    channel: Optional[ChannelSelection] = None,
+) -> Tensor:
+    """Select channel(s) from a CHW tensor for display.
+
+    Parameters
+    ----------
+    image : Tensor
+        CHW image tensor with arbitrary number of channels.
+    channel : int, tuple[int, ...], or None
+        * ``None`` — auto-select: C==1 pass-through, C<=3 keep as-is,
+          C>3 take first channel.
+        * ``int`` — extract a single channel (returns 1×H×W).
+        * ``tuple`` of 1–3 ints — gather those channels in order.
+
+    Returns
+    -------
+    Tensor
+        CHW tensor with C in {1, 2, 3}.
+    """
+    image = to_chw(image)
+    C = image.shape[0]
+
+    if channel is None:
+        if C <= 3:
+            return image
+        return image[:1]
+
+    if isinstance(channel, int):
+        if channel < 0 or channel >= C:
+            raise IndexError(
+                f"channel {channel} out of range for {C}-channel image"
+            )
+        return image[channel : channel + 1]
+
+    # tuple of indices
+    indices = list(channel)
+    for idx in indices:
+        if idx < 0 or idx >= C:
+            raise IndexError(
+                f"channel {idx} out of range for {C}-channel image"
+            )
+    return image[indices]
+
+
+def downsample_for_display(
+    image: Tensor,
+    max_size: Optional[int] = None,
+) -> Tensor:
+    """Downsample a CHW or BCHW tensor so max(H, W) <= *max_size*.
+
+    Uses area interpolation for clean downsampling.  Returns the image
+    unchanged when it is already within limits or *max_size* is ``None``.
+    """
+    if max_size is None:
+        return image
+    H, W = image.shape[-2], image.shape[-1]
+    long_edge = max(H, W)
+    if long_edge <= max_size:
+        return image
+
+    scale = max_size / long_edge
+    new_h = max(1, int(H * scale))
+    new_w = max(1, int(W * scale))
+    squeeze = image.ndim == 3
+    if squeeze:
+        image = image.unsqueeze(0)
+    image = F.interpolate(image, size=(new_h, new_w), mode="area")
+    if squeeze:
+        image = image.squeeze(0)
+    return image
 
 
 def to_grayscale(image: Tensor) -> Tensor:
@@ -235,8 +327,6 @@ def apply_cyclic_colormap(image: Tensor, colormap: str = "hsv") -> Tensor:
     return apply_colormap(image, colormap)
 
 
-
-
 def blend_alpha(
     base: Tensor, overlay: Tensor, alpha: float | Tensor
 ) -> Tensor:
@@ -250,7 +340,6 @@ def blend_alpha(
 
 def blend_multiply(base: Tensor, overlay: Tensor) -> Tensor:
     return base * overlay
-
 
 
 def gradient_magnitude(gx: Tensor, gy: Tensor) -> Tensor:

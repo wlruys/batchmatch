@@ -8,10 +8,8 @@ from typing import (
     Final,
     Iterable,
     Mapping,
-    Optional,
     Sequence,
     TypeVar,
-    Union,
     overload,
 )
 
@@ -26,10 +24,7 @@ Tensor = torch.Tensor
 T = TypeVar("T", bound="Stage")
 S = TypeVar("S", bound=type)
 
-try:
-    from frozendict import frozendict
-except ImportError:
-    frozendict = None  # type: ignore
+from frozendict import frozendict
 
 
 class StageRegistry:
@@ -176,7 +171,7 @@ def _register_scalar(
 def _register_optional_scalar(
     module: nn.Module,
     name: str,
-    value: Optional[float],
+    value: float | None,
     *,
     persistent: bool = False,
 ) -> None:
@@ -290,7 +285,7 @@ def coerce_stage_spec(
     *,
     field_name: str,
     allow_none: bool = False,
-) -> Optional[StageSpec]:
+) -> StageSpec | None:
     """
     Coerce various input formats into a StageSpec.
 
@@ -321,6 +316,16 @@ def coerce_stage_spec(
     if isinstance(value, str):
         return StageSpec(type=value, params={})
 
+    if isinstance(value, StageSpecConf):
+        return StageSpec(
+            type=str(value.type),
+            params=dict(value.params),
+        )
+
+    # Support other dataclass conf types with ``type`` and ``params`` fields.
+    # This catches Hydra structured configs and any user-defined dataclass
+    # that mirrors StageSpecConf's interface (must be a dataclass *instance*
+    # with both ``type: str`` and ``params: dict`` attributes).
     if is_dataclass(value) and not isinstance(value, type):
         if hasattr(value, "type") and hasattr(value, "params"):
             return StageSpec(
@@ -341,8 +346,11 @@ def _parse_stage_mapping(raw: dict[str, Any], field_name: str) -> StageSpec:
     """
     Parse a dictionary into a StageSpec.
 
+    .. note:: This function mutates *raw* via ``.pop()``.  Callers that
+       need to preserve the original mapping should pass a copy.
+
     Args:
-        raw: Mapping containing a stage spec.
+        raw: Mapping containing a stage spec (will be mutated).
         field_name: Name used in error messages for context.
 
     Returns:
@@ -396,7 +404,7 @@ def coerce_stage_list(
     raise TypeError(f"{field_name} must be a sequence of stages or None")
 
 
-def should_build_stage(spec: Optional[StageSpec]) -> bool:
+def should_build_stage(spec: StageSpec | None) -> bool:
     """
     Check whether a stage spec should be instantiated.
 
@@ -511,11 +519,11 @@ class Stage(TensorDictModuleBase, ABC):
         image: TensorDict | list[TensorDict], 
         *args: TensorDict
     ) -> TensorDict | list[TensorDict]:
-        """
-        Execute the stage with validation and invalidation.
+        """Execute the stage with validation and invalidation.
 
-        Supports a single TensorDict, a list of TensorDicts, or multiple
-        TensorDicts passed as positional arguments.
+        For a single ``TensorDict``, validates, runs ``forward``, and
+        invalidates.  For multiple inputs (a list or extra positional
+        args) delegates to :meth:`call_batch`.
 
         Args:
             image: Input container or list of containers.
@@ -526,7 +534,6 @@ class Stage(TensorDictModuleBase, ABC):
         """
         if not args and not isinstance(image, list):
             if self._auto_validate:
-                # Skip validation if same object was just validated
                 img_id = id(image)
                 if img_id != self._last_validated_id:
                     self._validate(image)
@@ -541,14 +548,32 @@ class Stage(TensorDictModuleBase, ABC):
         else:
             inputs = [image] + list(args)
 
+        return self.call_batch(inputs)
+
+    def call_batch(
+        self,
+        images: list[TensorDict],
+    ) -> list[TensorDict]:
+        """Process multiple containers.
+
+        Validates each input, then either calls ``forward`` once with the
+        full list (when the subclass accepts ``*args``) or maps
+        ``forward`` over each element individually.
+
+        Args:
+            images: List of input containers to process.
+
+        Returns:
+            List of processed containers.
+        """
         if self._auto_validate:
-            for img in inputs:
+            for img in images:
                 self._validate(img)
 
         if self._has_varargs:
-            result = self.forward(inputs)
+            result = self.forward(images)
         else:
-            result = [self.forward(img) for img in inputs]
+            result = [self.forward(img) for img in images]
 
         if self._auto_invalidate:
             for res in result:
@@ -638,10 +663,7 @@ class Stage(TensorDictModuleBase, ABC):
     def __rshift__(self, other: "Stage") -> "Pipeline":
         if not isinstance(other, Stage):
             return NotImplemented
-
-        left = [self]
-        right = list(other.stages) if isinstance(other, Pipeline) else [other]
-        return Pipeline(left + right)
+        return _compose_stages(self, other)
 
     def __repr__(self) -> str:
         parts = [type(self).__name__]
@@ -764,16 +786,14 @@ class Pipeline(Stage):
     def __rshift__(self: T, other: T) -> T:
         if not isinstance(other, Stage):
             return NotImplemented
-        
-        left = list(self.stages) if isinstance(self, Pipeline) else [self]
-        right = list(other.stages) if isinstance(other, Pipeline) else [other]
+        return _compose_stages(self, other)
 
-        return Pipeline(left + right)
-    
-    def __rrshift__(self: T, other: T) -> T:
-        if not isinstance(other, Stage):
-            return NotImplemented
-        return other.__rshift__(self)
+
+def _compose_stages(left: Stage, right: Stage) -> Pipeline:
+    """Flatten and compose two stages into a Pipeline."""
+    left_stages = list(left.stages) if isinstance(left, Pipeline) else [left]
+    right_stages = list(right.stages) if isinstance(right, Pipeline) else [right]
+    return Pipeline(left_stages + right_stages)
 
 
 class DropStaleStage(Stage):

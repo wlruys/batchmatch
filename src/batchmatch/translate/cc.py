@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional, Union
-
 import torch
 
 from batchmatch.helpers.tensor import expand_mask_to_image
@@ -17,14 +15,14 @@ def _masked_ncc_surface(
     mov_mask: Tensor,
     *,
     eps: float = 1e-6,
-    min_count: Union[float, Tensor] = 0.0,
-    F_A: Optional[Tensor] = None,
-    F_Rm: Optional[Tensor] = None,
-    F_Rm2: Optional[Tensor] = None,
-    F_B_out: Optional[Tensor] = None,
-    F_Im_out: Optional[Tensor] = None,
-    F_Im2_out: Optional[Tensor] = None,
-    surface_out: Optional[Tensor] = None,
+    min_count: float | Tensor = 0.0,
+    F_A: Tensor | None = None,
+    F_Rm: Tensor | None = None,
+    F_Rm2: Tensor | None = None,
+    F_B_out: Tensor | None = None,
+    F_Im_out: Tensor | None = None,
+    F_Im2_out: Tensor | None = None,
+    surface_out: Tensor | None = None,
 ) -> Tensor:
     """
     Compute masked normalized cross-correlation surface.

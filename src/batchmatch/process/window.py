@@ -6,6 +6,7 @@ Includes Tukey window helpers and stages for box/quad windows.
 from __future__ import annotations
 
 import math
+import warnings
 from dataclasses import dataclass
 from functools import lru_cache
 from typing import ClassVar, Mapping, Optional, Sequence, Union
@@ -333,9 +334,15 @@ class TukeyQuadWindow(Stage):
         return f"TukeyQuadWindow(alpha={self._alpha})"
 
 
-#TODO(wlr): Deprecate this, windowing is done inside search now
 @window_registry.register("apply", "apply_window")
 class ApplyWindowStage(Stage):
+    """Multiply targets by the domain window.
+
+    .. deprecated::
+        Windowing is now applied inside the search pipeline.
+        This stage will be removed in a future release.
+    """
+
     requires: ClassVar[frozenset[NestedKey]] = frozenset({
         ImageDetail.Keys.DOMAIN.WINDOW,
     })
@@ -347,6 +354,12 @@ class ApplyWindowStage(Stage):
         targets: Optional[Sequence[str]] = None,
     ) -> None:
         super().__init__()
+        warnings.warn(
+            "ApplyWindowStage is deprecated; windowing is now applied "
+            "inside the search pipeline.",
+            DeprecationWarning,
+            stacklevel=2,
+        )
 
         if targets is None:
             targets = ["image"]
@@ -457,12 +470,12 @@ def build_window_pipeline(
 
     stages: list[Stage] = []
     if pipeline_spec.stage is not None:
-        stage_spec = coerce_stage_spec(
-            pipeline_spec.stage,
-            field_name="window_pipeline.stage",
-            allow_none=False,
+        stage_spec = pipeline_spec.stage
+        if not isinstance(stage_spec, StageSpec):
+            stage_spec = coerce_stage_spec(stage_spec, field_name="window.stage", allow_none=False)
+        stage = window_registry.build(
+            stage_spec.type, **stage_spec.params
         )
-        stage = window_registry.build(stage_spec.type, **stage_spec.params)
         stages.append(stage)
 
     return Pipeline(stages)

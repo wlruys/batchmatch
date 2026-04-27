@@ -1,3 +1,4 @@
+"""batchmatch: batched image registration via translation and affine search."""
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version
@@ -19,6 +20,7 @@ from batchmatch.base import (
     coerce_stage_list,
     should_build_stage,
 )
+from batchmatch.helpers.device import auto_device
 from batchmatch.optimize import (
     AffineWarpOptimize,
     MetricConfig,
@@ -35,6 +37,7 @@ except PackageNotFoundError:
 
 __all__ = [
     "__version__",
+    "auto_device",
     "CacheTD",
     "ImageDetail",
     "WarpParams",

@@ -13,7 +13,6 @@ from pathlib import Path
 
 import torch
 
-from batchmatch.base import build_image_td
 from batchmatch.io import ImageIO
 from batchmatch.process.pad import build_pad_pipeline
 from batchmatch.process.resize import build_resize_pipeline
@@ -27,21 +26,12 @@ from batchmatch.view.config import (
     QuadAnnotationSpec,
 )
 from batchmatch.view.display import show_image, show_mask_overlay
+from batchmatch import auto_device
 from batchmatch.warp import build_warp_pipeline
 
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
-
-
-def _resolve_device(device: str) -> torch.device:
-    if device != "auto":
-        return torch.device(device)
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-        return torch.device("mps")
-    return torch.device("cpu")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -72,9 +62,8 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    device = _resolve_device(args.device)
-    img = ImageIO(grayscale=False, device=device).load(args.image)
-    td = build_image_td(img)
+    device = auto_device(args.device)
+    td = ImageIO(grayscale=False, device=device).load(args.image).detail
 
     resize_pipe = build_resize_pipeline(
         "target_resize",

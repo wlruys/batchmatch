@@ -1,3 +1,4 @@
+"""Core types: ImageDetail / WarpParams TensorDicts and the Stage / Pipeline framework."""
 from __future__ import annotations
 
 from batchmatch.base.tensordicts import (

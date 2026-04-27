@@ -2,20 +2,17 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Optional, Sequence, Tuple, Literal, ClassVar, Union
+from typing import Optional, Sequence, Tuple, ClassVar, Union
 
 import torch
 import torch.nn.functional as F
 from torch import Tensor
-from torch import nn
+
 from batchmatch.base.tensordicts import ImageDetail, NestedKey, WarpParams, _normalize_keys
 from batchmatch.base.pipeline import Pipeline, Stage, StageRegistry, StageSpec, coerce_stage_spec
-from batchmatch.helpers.box import pad_to_box, pad_to_quad, scale_quad, scale_xyxy, shrink_xyxy, shrink_quad
-from batchmatch.helpers.tensor import get_hw, scale_points
+from batchmatch.helpers.box import pad_to_box, pad_to_quad, shrink_xyxy, shrink_quad
+from batchmatch.process.crop import invalidate_warp_computed
 from batchmatch.process.window import make_box_window_batched
-from torchvision import tv_tensors
-from torchvision.ops import masks_to_boxes
-from torchvision.transforms import functional as TF
 
 pad_registry = StageRegistry("pad")
 
@@ -43,15 +40,8 @@ _PAD_OUTPUTS = {"image", "box", "quad", "mask", "window"}
 
 
 def _normalize_outputs(outputs: Optional[Sequence[str]]) -> Optional[set[str]]:
-    if outputs is None:
-        return None
-    normalized = {str(o) for o in outputs}
-    if "all" in normalized:
-        return set(_PAD_OUTPUTS)
-    unknown = normalized - _PAD_OUTPUTS
-    if unknown:
-        raise ValueError(f"Unknown outputs: {sorted(unknown)}. Valid: {sorted(_PAD_OUTPUTS)}")
-    return normalized
+    from batchmatch.process.crop import _normalize_stage_outputs
+    return _normalize_stage_outputs(outputs, _PAD_OUTPUTS)
 
 
 @pad_registry.register("center_pad")
@@ -73,7 +63,7 @@ class CenterPad(Stage):
         window_alpha: float = 0.05,
         shrink_by: Optional[int] = 4,
         pad_to_even: bool = False,
-        pad_to_pow2: bool =True,
+        pad_to_pow2: bool = True,
     ):
 
         outputs_set = _normalize_outputs(outputs)
@@ -138,9 +128,6 @@ class CenterPad(Stage):
             raise ValueError("Scale must be a float or a tuple of two floats.")
 
     def get_target_size(self, images: list[ImageDetail]) -> tuple[int, int]:
-        max_h = 0
-        max_w = 0
-
         scale_x, scale_y = self.get_scale()
 
         max_h = max(img.H for img in images)
@@ -210,16 +197,60 @@ class CenterPad(Stage):
 
     def _invalidate_warp(self, img: ImageDetail) -> None:
         warp = img.get(ImageDetail.Keys.WARP.ROOT, None)
-        if warp is None:
-            return
+        invalidate_warp_computed(warp)
 
-        for center_key in WarpParams.Keys.CENTER:
-            if center_key in warp.keys():
-                warp.del_(center_key)
+    def _pad_single(
+        self,
+        img: ImageDetail,
+        Ht: int,
+        Wt: int,
+    ) -> tuple[ImageDetail, tuple[int, int, int, int]]:
+        """Pad a single *img* to target size ``(Ht, Wt)``.
 
-        for computed_key in WarpParams.Keys.COMPUTED:
-            if computed_key in warp.keys():
-                warp.del_(computed_key)
+        Returns ``(detail, (left, top, right, bottom))`` so callers that
+        need the padding offsets (e.g. spatial wrappers) can obtain them
+        without re-deriving them from the target size.
+        """
+        B, C, H, W = img.image.shape
+        pad = _center_pad(H, W, Ht, Wt)
+
+        for ikey in self._image_keys:
+            padded_image = self.create_padded_image(img.get(ikey), pad, fill=0.0)
+            img.set(ikey, padded_image)
+
+        self._invalidate_warp(img)
+
+        # Create base box for the original image region
+        base_box = self.create_box(B, H, W, pad)
+        base_quad = self.create_quad(B, H, W, pad)
+        device = img.image.device
+        base_box = base_box.to(device=device)
+        base_quad = base_quad.to(device=device)
+
+        if self._shrink_by is not None and self._shrink_by > 0:
+            base_box = shrink_xyxy(base_box, self._shrink_by)
+            base_quad = shrink_quad(base_quad, self._shrink_by)
+
+        if self._create_box:
+            img.set(self._box_key, base_box)
+
+        if self._create_mask:
+            # Create mask from the (possibly shrunk) box
+            left, top, right, bottom = pad
+            shrink = self._shrink_by if self._shrink_by is not None else 0
+            mask = torch.zeros((B, Ht, Wt), dtype=torch.float32, device=device)
+            mask[:, top + shrink:Ht - bottom - shrink, left + shrink:Wt - right - shrink] = 1.0
+            img.set(self._mask_key, mask.unsqueeze(1))
+
+        if self._create_quad:
+            img.set(self._quad_key, base_quad)
+
+        if self._create_window:
+            # Create window from the (possibly shrunk) box
+            window = make_box_window_batched(Ht, Wt, base_box, alpha=self._window_alpha)
+            img.set(self._window_key, window.unsqueeze(1))
+
+        return img, pad
 
     def forward(
         self,
@@ -236,46 +267,7 @@ class CenterPad(Stage):
 
         out_images = []
         for img in images:
-            B, C, H, W = img.image.shape
-
-            pad = _center_pad(H, W, Ht, Wt)
-
-            for ikey in self._image_keys:
-                padded_image = self.create_padded_image(img.get(ikey), pad, fill=0.0)
-                img.set(ikey, padded_image)
-
-            self._invalidate_warp(img)
-
-            # Create base box for the original image region
-            base_box = self.create_box(B, H, W, pad)
-            base_quad = self.create_quad(B, H, W, pad)
-            device = img.image.device
-            base_box = base_box.to(device=device)
-            base_quad = base_quad.to(device=device)
-
-            if self._shrink_by is not None and self._shrink_by > 0:
-                base_box = shrink_xyxy(base_box, self._shrink_by)
-                base_quad = shrink_quad(base_quad, self._shrink_by)
-
-            if self._create_box:
-                img.set(self._box_key, base_box)
-
-            if self._create_mask:
-                # Create mask from the (possibly shrunk) box
-                left, top, right, bottom = pad
-                shrink = self._shrink_by if self._shrink_by is not None else 0
-                mask = torch.zeros((B, Ht, Wt), dtype=torch.float32, device=device)
-                mask[:, top + shrink:Ht - bottom - shrink, left + shrink:Wt - right - shrink] = 1.0
-                img.set(self._mask_key, mask.unsqueeze(1))
-
-            if self._create_quad:
-                img.set(self._quad_key, base_quad)
-
-            if self._create_window:
-                # Create window from the (possibly shrunk) box
-                window = make_box_window_batched(Ht, Wt, base_box, alpha=self._window_alpha)
-                img.set(self._window_key, window.unsqueeze(1))
-
+            img, _pad = self._pad_single(img, Ht, Wt)
             out_images.append(img)
 
         if isinstance(image, list):

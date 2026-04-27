@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import warnings
-from typing import Optional, Tuple, Union
 
 import torch
 
@@ -14,28 +13,28 @@ warnings.filterwarnings(
 Tensor = torch.Tensor
 
 
-def _fft2d(x: Tensor, *, out: Optional[Tensor] = None) -> Tensor:
+def _fft2d(x: Tensor, *, out: Tensor | None = None) -> Tensor:
     if out is None:
         return torch.fft.fft2(x, dim=(-2, -1))
     torch.fft.fft2(x, dim=(-2, -1), out=out)
     return out
 
 
-def _rfft2d(x: Tensor, *, out: Optional[Tensor] = None) -> Tensor:
+def _rfft2d(x: Tensor, *, out: Tensor | None = None) -> Tensor:
     if out is None:
         return torch.fft.rfft2(x, dim=(-2, -1))
     torch.fft.rfft2(x, dim=(-2, -1), out=out)
     return out
 
 
-def _ifft2d(x: Tensor, *, out: Optional[Tensor] = None) -> Tensor:
+def _ifft2d(x: Tensor, *, out: Tensor | None = None) -> Tensor:
     if out is None:
         return torch.fft.ifft2(x, dim=(-2, -1))
     torch.fft.ifft2(x, dim=(-2, -1), out=out)
     return out
 
 
-def _irfft2d(x: Tensor, *, s: Optional[Tuple[int, int]] = None, out: Optional[Tensor] = None) -> Tensor:
+def _irfft2d(x: Tensor, *, s: tuple[int, int] | None = None, out: Tensor | None = None) -> Tensor:
     if out is None:
         return torch.fft.irfft2(x, s=s, dim=(-2, -1))
     torch.fft.irfft2(x, s=s, dim=(-2, -1), out=out)
@@ -55,7 +54,7 @@ def _corr(F_left: Tensor, F_right: Tensor) -> Tensor:
 def _rcorr(
     F_left: Tensor,
     F_right: Tensor,
-    s: Optional[Tuple[int, int]] = None,
+    s: tuple[int, int] | None = None,
 ) -> Tensor:
     cc = _irfft2d(F_left * torch.conj(F_right), s=s)
     cc = _fftshift2d(cc).real
@@ -71,8 +70,8 @@ def _cross_correlation_surface(ref: Tensor, mov: Tensor) -> Tensor:
 def _rcross_correlation_surface(
     ref: Tensor,
     mov: Tensor,
-    F_ref: Optional[Tensor] = None,
-    F_mov_out: Optional[Tensor] = None,
+    F_ref: Tensor | None = None,
+    F_mov_out: Tensor | None = None,
 ) -> Tensor:
     if F_ref is None:
         F_ref = _rfft2d(ref)
@@ -83,7 +82,7 @@ def _rcross_correlation_surface(
 def _overlap_area(
     ref_mask: Tensor, 
     mov_mask: Tensor,
-    F_ref_mask: Optional[Tensor] = None
+    F_ref_mask: Tensor | None = None
 ) -> Tensor:
     if F_ref_mask is None:
         F_ref_mask = _rfft2d(ref_mask)
@@ -99,8 +98,8 @@ def _normalize_by_overlap(
     ref_mask: Tensor,
     mov_mask: Tensor,
     *,
-    min_area: Union[float, Tensor] = 1.0,
-    F_ref_mask: Optional[Tensor] = None
+    min_area: float | Tensor = 1.0,
+    F_ref_mask: Tensor | None = None
 ) -> Tensor:
     area = _overlap_area(ref_mask, mov_mask, F_ref_mask=F_ref_mask)
 
@@ -133,7 +132,7 @@ def _fractional_overlap_threshold(mask: Tensor, fraction: float) -> Tensor:
     return threshold.reshape(mask_values.shape[0], 1, 1)
 
 
-def _extract_peak_from_surface(surface: Tensor, H: int, W: int) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+def _extract_peak_from_surface(surface: Tensor, H: int, W: int) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     B, _, _ = surface.shape
     flat = surface.reshape(B, -1)
     scores, idx = flat.max(dim=1)
@@ -156,7 +155,7 @@ def _extract_peak_from_surface(surface: Tensor, H: int, W: int) -> Tuple[Tensor,
 
 def _extract_peak_from_unshifted_surface(
     surface: Tensor, H: int, W: int
-) -> Tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     B, _, _ = surface.shape
     flat = surface.reshape(B, -1)
     scores, idx = flat.max(dim=1)
@@ -183,26 +182,3 @@ def _extract_peak_from_unshifted_surface(
     tx = torch.where(peak_x >= half_W, peak_x_f - float(W), peak_x_f)
 
     return ty, tx, scores, peak_y, peak_x
-
-
-def _softmax_surface(surface: Tensor, *, dim: int = -1) -> Tensor:
-    max_vals, _ = surface.max(dim=dim, keepdim=True)
-    exp_surface = torch.exp(surface - max_vals)
-    sum_exp = exp_surface.sum(dim=dim, keepdim=True)
-    softmaxed = exp_surface / sum_exp
-    return softmaxed
-
-
-def _extract_softmax_peak_from_surface(surface: Tensor, H: int, W: int) -> Tuple[Tensor, Tensor, Tensor]:
-    B, _, _ = surface.shape
-    softmaxed = _softmax_surface(surface, dim=(-2, -1))
-    grid_y = torch.arange(H, device=surface.device, dtype=surface.dtype).view(1, H, 1)
-    grid_x = torch.arange(W, device=surface.device, dtype=surface.dtype).view(1, 1, W)
-    exp_y = (softmaxed * grid_y).sum(dim=(-2, -1))
-    exp_x = (softmaxed * grid_x).sum(dim=(-2, -1))
-    center_y = (H // 2)
-    center_x = (W // 2)
-    ty = exp_y - float(center_y)
-    tx = exp_x - float(center_x)
-    scores = (softmaxed * surface).sum(dim=(-2, -1))
-    return ty, tx, scores

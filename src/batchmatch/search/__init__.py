@@ -39,6 +39,7 @@ from batchmatch.search.product import (
     ProductPipelineConfig,
     build_product_pipeline,
 )
+from batchmatch.search.transform import RegistrationTransform
 
 __all__ = [
     "AP",
@@ -71,6 +72,7 @@ __all__ = [
     "ProductCropStage",
     "ProductPipelineConfig",
     "build_product_pipeline",
+    "RegistrationTransform",
 ]
 
 try:
@@ -113,7 +115,6 @@ try:
         "allgather_results_gpu",
         "reduce_top_k",
         "allreduce_top_k",
-        "reduce_top_k_gpu",
         "reduce_top_k_gpu",
         "allreduce_top_k_gpu",
         "is_cuda_aware_mpi",

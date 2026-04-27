@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import List, Optional, Union
+from typing import Optional, Sequence
 
 from batchmatch.base.pipeline import Stage
 from batchmatch.process.config import CropConfig, CropOutputConfig, MaskCropConfig, RandomCropConfig
@@ -8,16 +8,14 @@ from batchmatch.process.crop import build_crop_stage
 
 __all__ = ["build_crop_stage_from_config"]
 
-#TODO(wlr): This is mainly for Hydra integration, currently unused elsewhere
 
-
-def _normalize_outputs(outputs: Union[List[str], CropOutputConfig]) -> List[str]:
+def _normalize_outputs(outputs: list[str] | CropOutputConfig) -> list[str]:
     if isinstance(outputs, CropOutputConfig):
         return outputs.to_outputs_list()
     return outputs
 
 
-def build_crop_stage_from_config(crop: Optional[CropConfig]) -> Optional[Stage]:
+def build_crop_stage_from_config(crop: CropConfig | None) -> Stage | None:
     if crop is None:
         return None
 

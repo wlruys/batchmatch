@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import math
-from typing import Set, Union
+from abc import abstractmethod
+from typing import ClassVar, Set, Union
 
 import torch
 import torch.nn as nn
@@ -121,6 +122,7 @@ class _GroupedConvKernels(nn.Module):
     def _conv2(self, x: Tensor, k: Tensor, *, padding: int, tag: str) -> Tensor:
         C = x.shape[1]
         K = 1
+        # _version tracks buffer mutations so cached weights stay in sync with the kernel.
         key = (tag, C, K, x.device, x.dtype, getattr(k, "_version", 0))
         w = self._w_cache.get(key)
         if w is None:
@@ -160,14 +162,15 @@ class _GroupedConvKernels(nn.Module):
 
 
 class GradientModuleBase(_GroupedConvKernels, Stage):
-    requires: frozenset[NestedKey] = frozenset({ImageDetail.Keys.IMAGE})
-    sets: Set[NestedKey] = {ImageDetail.Keys.GRAD.X, ImageDetail.Keys.GRAD.Y}
+    requires: ClassVar[frozenset[NestedKey]] = frozenset({ImageDetail.Keys.IMAGE})
+    sets: ClassVar[frozenset[NestedKey]] = frozenset({ImageDetail.Keys.GRAD.X, ImageDetail.Keys.GRAD.Y})
 
     def __init__(self, **kwargs) -> None:
         super().__init__(**kwargs)
 
+    @abstractmethod
     def _compute(self, img: Tensor) -> tuple[Tensor, Tensor]:
-        raise NotImplementedError
+        ...
 
     def forward(self, tensordict: ImageDetail) -> ImageDetail:
         img = tensordict.get(ImageDetail.Keys.IMAGE)

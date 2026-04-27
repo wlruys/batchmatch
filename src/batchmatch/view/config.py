@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Literal, Optional, Sequence, Tuple
+from typing import Literal, Optional, Sequence, Tuple, Union
 
 Color = Tuple[float, float, float]
+ChannelSelection = Union[int, Tuple[int, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,15 @@ class ImageViewSpec:
     show_colorbar: bool = False
     colorbar_label: Optional[str] = None
 
+    # Multi-channel support: select which channel(s) to display.
+    #   None  -> auto (C==1: grayscale, C<=3: RGB, C>3: first channel)
+    #   int   -> single channel, rendered with *colormap*
+    #   (i,j,k) -> three channels mapped to (R, G, B)
+    channel: Optional[ChannelSelection] = None
+
+    # High-resolution support: downsample for display when max(H,W) > max_display_size
+    max_display_size: Optional[int] = None
+
 
 @dataclass(frozen=True, slots=True)
 class GallerySpec:
@@ -41,6 +51,7 @@ class GallerySpec:
     spacing: float = 0.1
     per_image_size: Tuple[float, float] = (4.0, 4.0)
     preserve_relative_size: bool = False
+    channel_names: Optional[Sequence[str]] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -108,6 +119,7 @@ class OverlaySpec:
     normalize: Literal["minmax", "joint", "none"] = "minmax"
     normalize_per_image: bool = False
     grayscale: bool = True
+    channel: Optional[ChannelSelection] = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +133,11 @@ class EdgeOverlaySpec:
     glow_radius: int = 0
     dim_under_edges: float = 0.7
 
+    # Multi-channel support: select which channel(s) to use as the background
+    # image when rendering the edge overlay.  None → auto (C<=3 keep as-is,
+    # C>3 take first channel).
+    channel: Optional[ChannelSelection] = None
+
 
 @dataclass(frozen=True, slots=True)
 class CheckerboardSpec:
@@ -133,6 +150,7 @@ class CheckerboardSpec:
     normalize_per_image: bool = False
     gamma: float = 1.0
     grayscale: bool = True
+    channel: Optional[ChannelSelection] = None
 
     ref_tint: Color = (1.0, 0.8, 0.7)
     mov_tint: Color = (0.7, 0.85, 1.0)

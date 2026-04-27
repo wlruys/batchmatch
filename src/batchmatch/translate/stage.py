@@ -3,7 +3,6 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from enum import Enum
-from typing import List, Optional, Tuple
 
 import torch
 
@@ -50,12 +49,12 @@ class BufferShapeType(Enum):
 class MovingBufferSpec:
     key: NestedKey
     shape_type: BufferShapeType
-    channels: Optional[int] = None
+    channels: int | None = None
     complex_dtype: bool = False
 
     def compute_shape(
         self, batch_size: int, image_channels: int, height: int, width: int
-    ) -> Tuple[int, ...]:
+    ) -> tuple[int, ...]:
         C = self.channels if self.channels is not None else image_channels
 
         if self.shape_type == BufferShapeType.RFFT_IMAGE:
@@ -94,7 +93,7 @@ class TranslationSearchStage(Stage, ABC):
     def __init__(
         self,
         *,
-        overlap_fraction: Optional[float] = None,
+        overlap_fraction: float | None = None,
         save_surface: bool = True,
     ):
         super().__init__()
@@ -107,7 +106,7 @@ class TranslationSearchStage(Stage, ABC):
         return image
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return []
 
     @abstractmethod
@@ -180,7 +179,7 @@ class CrossCorrelationStage(TranslationSearchStage):
     def __init__(
         self,
         *,
-        overlap_fraction: Optional[float] = None,
+        overlap_fraction: float | None = None,
         mean_centered: bool = False,
         **kwargs,
     ):
@@ -190,7 +189,7 @@ class CrossCorrelationStage(TranslationSearchStage):
         self.requires_masks = mean_centered or (overlap_fraction is not None)
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return [
             MovingBufferSpec(
                 key=ImageDetail.Keys.CACHE.FFT_MOV_IMAGE,
@@ -278,14 +277,14 @@ class GradientCrossCorrelationStage(TranslationSearchStage):
     def __init__(
         self,
         *,
-        overlap_fraction: Optional[float] = 0.1,
+        overlap_fraction: float | None = 0.1,
         **kwargs,
     ):
         super().__init__(overlap_fraction=overlap_fraction, **kwargs)
         self.overlap_fraction = overlap_fraction
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return [
             MovingBufferSpec(
                 key=ImageDetail.Keys.CACHE.FFT_MOV_IMAGE,
@@ -352,7 +351,7 @@ class MaskedNCCStage(TranslationSearchStage):
     def __init__(
         self,
         *,
-        overlap_fraction: Optional[float] = 0.5,
+        overlap_fraction: float | None = 0.5,
         eps: float = 1e-6,
         **kwargs,
     ):
@@ -361,7 +360,7 @@ class MaskedNCCStage(TranslationSearchStage):
         self.eps = eps
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return [
             MovingBufferSpec(
                 key=ImageDetail.Keys.CACHE.FFT_MOV_MASK,
@@ -460,7 +459,7 @@ class PhaseCorrelationStage(TranslationSearchStage):
         skip_fftshift: bool = True,
         p: float = 1.0,
         q: float = 1.0,
-        overlap_fraction: Optional[float] = 0.99, #only enabled for p/q != 1.0
+        overlap_fraction: float | None = 0.99, #only enabled for p/q != 1.0
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -472,7 +471,7 @@ class PhaseCorrelationStage(TranslationSearchStage):
         #TODO(wlr): Implement support for p,q != 1.0 with overlap mask scaling
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return [
             MovingBufferSpec(
                 key=ImageDetail.Keys.CACHE.FFT_MOV,
@@ -550,7 +549,7 @@ class GradientPhaseCorrelationStage(TranslationSearchStage):
         skip_fftshift: bool = True,
         p: float = 1.0,
         q: float = 1.0,
-        overlap_fraction: Optional[float] = 0.99, #only enabled for p/q != 1.0
+        overlap_fraction: float | None = 0.99, #only enabled for p/q != 1.0
         **kwargs,
     ):
         super().__init__(**kwargs)
@@ -562,7 +561,7 @@ class GradientPhaseCorrelationStage(TranslationSearchStage):
         #TODO(wlr): Implement support for p,q != 1.0 with overlap mask scaling
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return [
             MovingBufferSpec(
                 key=ImageDetail.Keys.CACHE.FFT_MOV,
@@ -642,7 +641,7 @@ class NormalizedGradientFieldsStage(TranslationSearchStage):
     def __init__(
         self,
         *,
-        overlap_fraction: Optional[float] = 0.5,
+        overlap_fraction: float | None = 0.5,
         weight_by_gradient_norm: bool = False,
         gradient_norm_eps: float = 1e-6,
         **kwargs,
@@ -655,7 +654,7 @@ class NormalizedGradientFieldsStage(TranslationSearchStage):
             self.requires_masks = True
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         return [
             MovingBufferSpec(
                 key=ImageDetail.Keys.CACHE.FFT_MOV_GX2,
@@ -779,7 +778,7 @@ class GeneralizedNGFStage(TranslationSearchStage):
         self,
         *,
         p: int = 2,
-        overlap_fraction: Optional[float] = 0.99,
+        overlap_fraction: float | None = 0.99,
         **kwargs,
     ):
         super().__init__(overlap_fraction=overlap_fraction, **kwargs)
@@ -798,7 +797,7 @@ class GeneralizedNGFStage(TranslationSearchStage):
         ]
 
     @property
-    def moving_buffer_specs(self) -> List[MovingBufferSpec]:
+    def moving_buffer_specs(self) -> list[MovingBufferSpec]:
         buffers = [
             MovingBufferSpec(
                 key=key,

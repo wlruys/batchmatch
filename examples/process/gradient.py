@@ -15,7 +15,6 @@ import argparse
 import os
 from pathlib import Path
 
-from batchmatch.base import build_image_td
 from batchmatch.gradient import build_gradient_pipeline
 from batchmatch.io import ImageIO
 from batchmatch.view.config import DisplaySpec, GradientGallerySpec, GradientViewSpec
@@ -47,8 +46,7 @@ def main() -> None:
 
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
-    image = ImageIO(grayscale=True).load(args.image)
-    detail = build_image_td(image)
+    detail = ImageIO(grayscale=True).load(args.image).detail
 
     gradient_pipe = build_gradient_pipeline(
         "cd",

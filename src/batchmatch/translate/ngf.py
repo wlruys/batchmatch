@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Optional, Sequence
+from collections.abc import Sequence
 
 import math
 
@@ -19,13 +19,13 @@ def _normalized_gradient_fields_surface(
     mov_gy: Tensor,
     mov_window: Tensor,
     # Cached components for Reference
-    F_ref_gx_2: Optional[Tensor] = None,
-    F_ref_gy_2: Optional[Tensor] = None,
-    F_ref_cross: Optional[Tensor] = None,
+    F_ref_gx_2: Tensor | None = None,
+    F_ref_gy_2: Tensor | None = None,
+    F_ref_cross: Tensor | None = None,
     # Optional buffers for Moving FFTs
-    F_mov_gx_2_out: Optional[Tensor] = None,
-    F_mov_gy_2_out: Optional[Tensor] = None,
-    F_mov_cross_out: Optional[Tensor] = None,
+    F_mov_gx_2_out: Tensor | None = None,
+    F_mov_gy_2_out: Tensor | None = None,
+    F_mov_cross_out: Tensor | None = None,
 ) -> Tensor:
     """
     Compute squared dot-product NGF surface via FFTs.
@@ -88,8 +88,8 @@ def _generalized_ngf_surface(
     mov_window: Tensor,
     *,
     p: int,
-    F_ref_terms: Optional[Sequence[Optional[Tensor]]] = None,
-    F_mov_terms_out: Optional[Sequence[Optional[Tensor]]] = None,
+    F_ref_terms: Sequence[Tensor | None] | None = None,
+    F_mov_terms_out: Sequence[Tensor | None] | None = None,
 ) -> Tensor:
     if p < 1:
         raise ValueError(f"p must be >= 1, got {p}")
@@ -108,7 +108,7 @@ def _generalized_ngf_surface(
             f"Expected {p + 1} moving FFT buffers, got {len(F_mov_terms_out)}"
         )
 
-    F_sum: Optional[Tensor] = None
+    F_sum: Tensor | None = None
     for i in range(p + 1):
         exp_x = p - i
         exp_y = i
