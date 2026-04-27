@@ -38,7 +38,6 @@ from batchmatch.process.crop import (
     build_crop_stage,
     crop_registry,
     invalidate_warp_computed,
-    _normalize_stage_outputs,
 )
 from batchmatch.process.builders import build_crop_stage_from_config
 from batchmatch.process.pad import (

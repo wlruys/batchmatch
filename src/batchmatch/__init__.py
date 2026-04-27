@@ -1,3 +1,4 @@
+"""batchmatch: batched image registration via translation and affine search."""
 from __future__ import annotations
 
 from importlib.metadata import PackageNotFoundError, version as _pkg_version

@@ -1,3 +1,4 @@
+"""Visualisation: rendering, galleries, overlays, and registration previews."""
 from .config import (
     ChannelSelection,
     DisplaySpec,

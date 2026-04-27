@@ -21,10 +21,11 @@ import torch
 
 from batchmatch import auto_device
 from batchmatch.io import (
-    ImageIO,
     ProductIO,
     RegionYXHW,
     SourceInfo,
+    export_moving_mask_tiff,
+    export_stacked_registered_tiff,
     load_image,
     open_image,
 )
@@ -129,7 +130,27 @@ def _parse_args() -> argparse.Namespace:
         "--tile-size",
         type=int,
         default=None,
-        help="Optional output tile size for full-resolution warp/export.",
+        help=(
+            "Optional output tile size for full-resolution warp/export. "
+            "Streaming TIFF export defaults to 512 and rounds to a multiple of 16."
+        ),
+    )
+    parser.add_argument(
+        "--pyramid-levels",
+        type=int,
+        default=0,
+        help="Number of 2x OME-TIFF SubIFD pyramid levels for exported TIFFs.",
+    )
+    parser.add_argument(
+        "--eager-export",
+        action="store_true",
+        help="Disable streamed tile/channel TIFF export and use the legacy eager path.",
+    )
+    parser.add_argument(
+        "--export-compression",
+        type=str,
+        default=None,
+        help="Optional lossless tifffile compression codec, e.g. zlib or zstd.",
     )
     parser.add_argument(
         "--export-channels",
@@ -244,44 +265,6 @@ def _save_pair_preview(
     )
 
 
-def _shift_matrix(tx: float, ty: float) -> np.ndarray:
-    return np.array(
-        [[1.0, 0.0, float(tx)], [0.0, 1.0, float(ty)], [0.0, 0.0, 1.0]],
-        dtype=np.float64,
-    )
-
-
-def _apply_points(points_xy: np.ndarray, matrix: np.ndarray) -> np.ndarray:
-    ones = np.ones((points_xy.shape[0], 1), dtype=np.float64)
-    hom = np.concatenate([points_xy.astype(np.float64), ones], axis=1)
-    out = hom @ np.asarray(matrix, dtype=np.float64).T
-    return out[:, :2] / out[:, 2:3]
-
-
-def _image_corners(hw: tuple[int, int]) -> np.ndarray:
-    h, w = hw
-    return np.array(
-        [[0.0, 0.0], [float(w), 0.0], [float(w), float(h)], [0.0, float(h)]],
-        dtype=np.float64,
-    )
-
-
-def _union_bbox_ref_full(
-    ref_hw: tuple[int, int],
-    mov_hw: tuple[int, int],
-    matrix_ref_from_mov: np.ndarray,
-) -> tuple[int, int, int, int]:
-    ref_h, ref_w = ref_hw
-    mov_ref = _apply_points(_image_corners(mov_hw), matrix_ref_from_mov)
-    x0 = int(np.floor(min(0.0, float(mov_ref[:, 0].min()))))
-    y0 = int(np.floor(min(0.0, float(mov_ref[:, 1].min()))))
-    x1 = int(np.ceil(max(float(ref_w), float(mov_ref[:, 0].max()))))
-    y1 = int(np.ceil(max(float(ref_h), float(mov_ref[:, 1].max()))))
-    if x1 <= x0 or y1 <= y0:
-        raise ValueError(f"Invalid union bbox {(x0, y0, x1, y1)}.")
-    return x0, y0, x1, y1
-
-
 def _physical_ref_from_mov(ref: SourceInfo, mov: SourceInfo) -> np.ndarray:
     if ref.pixel_size_xy is None or mov.pixel_size_xy is None:
         raise ValueError("Physical placement requires pixel_size_xy metadata.")
@@ -297,162 +280,6 @@ def _physical_ref_from_mov(ref: SourceInfo, mov: SourceInfo) -> np.ndarray:
         ],
         dtype=np.float64,
     )
-
-
-def _prefixed_channel_names(source: SourceInfo, count: int, prefix: str) -> tuple[str, ...]:
-    names = list(source.channel_names)
-    if len(names) < count:
-        names.extend(f"channel_{i}" for i in range(len(names), count))
-    return tuple(f"{prefix}:{name or f'channel_{i}'}" for i, name in enumerate(names[:count]))
-
-
-def _stacked_output_source(
-    *,
-    path: Path,
-    reference: SourceInfo,
-    moving: SourceInfo,
-    ref_channels: int,
-    mov_channels: int,
-    out_hw: tuple[int, int],
-    bbox_ref_full_xyxy: tuple[int, int, int, int],
-) -> SourceInfo:
-    out_h, out_w = out_hw
-    x0, y0, _, _ = bbox_ref_full_xyxy
-    origin_xy = None
-    extent_xy = None
-    if reference.pixel_size_xy is not None:
-        sx, sy = reference.pixel_size_xy
-        ox, oy = reference.origin_xy or (0.0, 0.0)
-        origin_xy = (float(ox) + float(x0) * float(sx), float(oy) + float(y0) * float(sy))
-        extent_xy = (float(out_w) * float(sx), float(out_h) * float(sy))
-
-    channel_names = (
-        _prefixed_channel_names(reference, ref_channels, "reference")
-        + _prefixed_channel_names(moving, mov_channels, "moving")
-    )
-    return SourceInfo(
-        source_path=str(path),
-        series_index=0,
-        level_count=1,
-        level_shapes=((int(out_h), int(out_w)),),
-        axes="CYX",
-        dtype="float32",
-        channel_names=channel_names,
-        pixel_size_xy=reference.pixel_size_xy,
-        unit=reference.unit,
-        origin_xy=origin_xy,
-        physical_extent_xy=extent_xy,
-        format="ome-tiff",
-    )
-
-
-def _write_stacked_union_tiff(
-    *,
-    reference: SpatialImage,
-    moving: SpatialImage,
-    matrix_ref_from_mov: np.ndarray,
-    output_path: Path,
-    tile_size: int | None,
-    overwrite: bool = True,
-) -> dict[str, object]:
-    bbox = _union_bbox_ref_full(reference.shape_hw, moving.shape_hw, matrix_ref_from_mov)
-    x0, y0, x1, y1 = bbox
-    out_hw = (y1 - y0, x1 - x0)
-    matrix_canvas_from_ref = _shift_matrix(-x0, -y0)
-    matrix_canvas_from_mov = matrix_canvas_from_ref @ np.asarray(matrix_ref_from_mov, dtype=np.float64)
-
-    ref_canvas = warp_to_reference(
-        reference.detail,
-        matrix_canvas_from_ref,
-        out_hw=out_hw,
-        tile_size=tile_size,
-    )
-    mov_canvas = warp_to_reference(
-        moving.detail,
-        matrix_canvas_from_mov,
-        out_hw=out_hw,
-        tile_size=tile_size,
-    )
-    stacked = torch.cat([ref_canvas.image, mov_canvas.image], dim=1)
-    source = _stacked_output_source(
-        path=output_path,
-        reference=reference.space.source,
-        moving=moving.space.source,
-        ref_channels=int(ref_canvas.image.shape[1]),
-        mov_channels=int(mov_canvas.image.shape[1]),
-        out_hw=out_hw,
-        bbox_ref_full_xyxy=bbox,
-    )
-    ImageIO().save(
-        stacked,
-        output_path,
-        overwrite=overwrite,
-        source=source,
-        channel_names=source.channel_names,
-    )
-    return {
-        "path": output_path.name,
-        "canvas": "union",
-        "bbox_ref_full_xyxy": list(bbox),
-        "matrix_canvas_from_ref_full": matrix_canvas_from_ref.tolist(),
-        "matrix_canvas_from_mov_full": matrix_canvas_from_mov.tolist(),
-        "source": source.to_dict(),
-    }
-
-
-def _write_moving_mask_union_tiff(
-    *,
-    moving: SpatialImage,
-    matrix_ref_from_mov: np.ndarray,
-    output_path: Path,
-    bbox_ref_full_xyxy: tuple[int, int, int, int],
-    reference_source: SourceInfo,
-    tile_size: int | None,
-) -> dict[str, object]:
-    x0, y0, x1, y1 = bbox_ref_full_xyxy
-    out_hw = (y1 - y0, x1 - x0)
-    matrix_canvas_from_mov = _shift_matrix(-x0, -y0) @ np.asarray(matrix_ref_from_mov, dtype=np.float64)
-    mask = torch.ones(
-        (1, 1, moving.detail.H, moving.detail.W),
-        dtype=torch.float32,
-        device=moving.detail.image.device,
-    )
-    mask_canvas = warp_to_reference(
-        mask,
-        matrix_canvas_from_mov,
-        out_hw=out_hw,
-        tile_size=tile_size,
-        mode="nearest",
-    )
-
-    origin_xy = None
-    extent_xy = None
-    if reference_source.pixel_size_xy is not None:
-        sx, sy = reference_source.pixel_size_xy
-        ox, oy = reference_source.origin_xy or (0.0, 0.0)
-        origin_xy = (float(ox) + float(x0) * float(sx), float(oy) + float(y0) * float(sy))
-        extent_xy = (float(out_hw[1]) * float(sx), float(out_hw[0]) * float(sy))
-
-    source = SourceInfo(
-        source_path=str(output_path),
-        series_index=0,
-        level_count=1,
-        level_shapes=(out_hw,),
-        axes="YX",
-        dtype="uint8",
-        pixel_size_xy=reference_source.pixel_size_xy,
-        unit=reference_source.unit,
-        origin_xy=origin_xy,
-        physical_extent_xy=extent_xy,
-        format="ome-tiff",
-    )
-    ImageIO().save(
-        (mask_canvas.image > 0.5).to(torch.uint8),
-        output_path,
-        overwrite=True,
-        source=source,
-    )
-    return {"path": output_path.name, "source": source.to_dict()}
 
 
 def _apply_synthetic_moving_warp(
@@ -665,37 +492,47 @@ def main() -> None:
                 "writing all reference and moving channels."
             )
 
-        full_reference_all = load_image(args.reference, channels=None, downsample=1, grayscale=False)
-        full_moving_all = load_image(moving_path, channels=None, downsample=1, grayscale=False)
-
         after_path = args.output_dir / args.export_name
-        after_artifact = _write_stacked_union_tiff(
-            reference=full_reference_all.to("cpu"),
-            moving=full_moving_all.to("cpu"),
-            matrix_ref_from_mov=transform.matrix_ref_full_from_mov_full,
+        after_artifact = export_stacked_registered_tiff(
+            transform,
+            reference_path=args.reference,
+            moving_path=moving_path,
             output_path=after_path,
             tile_size=args.tile_size,
+            pyramid_levels=args.pyramid_levels,
+            streaming=not args.eager_export,
+            overwrite=True,
+            compression=args.export_compression,
         )
         after_bbox = tuple(int(v) for v in after_artifact["bbox_ref_full_xyxy"])
-        mask_artifact = _write_moving_mask_union_tiff(
-            moving=full_moving_all.to("cpu"),
-            matrix_ref_from_mov=transform.matrix_ref_full_from_mov_full,
+        mask_artifact = export_moving_mask_tiff(
+            transform,
+            moving_path=moving_path,
+            reference_path=args.reference,
             output_path=args.output_dir / args.mask_name,
             bbox_ref_full_xyxy=after_bbox,
-            reference_source=full_reference_all.space.source,
             tile_size=args.tile_size,
+            pyramid_levels=args.pyramid_levels,
+            streaming=not args.eager_export,
+            overwrite=True,
+            compression=args.export_compression,
         )
 
         before_matrix = _physical_ref_from_mov(
-            full_reference_all.space.source,
-            full_moving_all.space.source,
+            transform.reference.source,
+            transform.moving.source,
         )
-        before_artifact = _write_stacked_union_tiff(
-            reference=full_reference_all.to("cpu"),
-            moving=full_moving_all.to("cpu"),
+        before_artifact = export_stacked_registered_tiff(
+            transform,
+            reference_path=args.reference,
+            moving_path=moving_path,
             matrix_ref_from_mov=before_matrix,
             output_path=args.output_dir / args.before_export_name,
             tile_size=args.tile_size,
+            pyramid_levels=args.pyramid_levels,
+            streaming=not args.eager_export,
+            overwrite=True,
+            compression=args.export_compression,
         )
         export_artifacts["exports"] = {
             "registered_union": after_artifact,

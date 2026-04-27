@@ -1,3 +1,4 @@
+"""Image and tensor I/O: TIFF / raster loading, saving, and registered exports."""
 from __future__ import annotations
 
 from batchmatch.io._tiff_meta import TiffMeta
@@ -29,7 +30,12 @@ from batchmatch.io.space import (
     SpatialImage,
 )
 from batchmatch.io.product import ProductIO
-from batchmatch.io.export import RegisteredExport, export_registered
+from batchmatch.io.export import (
+    RegisteredExport,
+    export_moving_mask_tiff,
+    export_registered,
+    export_stacked_registered_tiff,
+)
 from batchmatch.io.tensors import TensorIO
 
 __all__ = [
@@ -63,7 +69,9 @@ __all__ = [
     "ImageDetailIO",
     "ProductIO",
     "RegisteredExport",
+    "export_moving_mask_tiff",
     "export_registered",
+    "export_stacked_registered_tiff",
     # Spatial types
     "ImageSpace",
     "PaddingLTRB",

@@ -1,3 +1,4 @@
+"""Image similarity metrics (MSE/MAE, NCC, NGF, mutual information)."""
 from __future__ import annotations
 
 from .base import (

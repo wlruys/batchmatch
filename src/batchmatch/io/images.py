@@ -1046,6 +1046,8 @@ def _write_tiff_configured(
     fmt = cfg._resolve_format(effective_source)
     photometric = cfg._resolve_photometric(fmt, arr2d_or_cyx.ndim, c)
     channel_names = cfg._resolve_channel_names(effective_source)
+    if fmt == "ome-tiff" and c > 1 and channel_names and cfg.photometric == "auto":
+        photometric = "minisblack"
     resolution, resolutionunit = _tiff_resolution_from_source(effective_source)
 
     kwargs: dict = {}
@@ -1054,7 +1056,12 @@ def _write_tiff_configured(
     kwargs["photometric"] = photometric
 
     if fmt == "ome-tiff":
-        ome_metadata = _build_ome_metadata(effective_source, channel_names, c)
+        # Use natural CYX (multi-channel) or YX (single-channel) axes.  Some
+        # readers (older Bio-Formats, naive TIFF readers) treat synthetic
+        # singleton-T planes as a 6-frame time series, so we never insert a
+        # phantom T dimension.
+        ome_axes = "CYX" if arr2d_or_cyx.ndim == 3 else "YX"
+        ome_metadata = _build_ome_metadata(effective_source, channel_names, c, axes=ome_axes)
         with tifffile.TiffWriter(str(path), ome=True) as tw:
             write_kwargs = dict(kwargs)
             if resolution is not None:
@@ -1097,6 +1104,12 @@ def _write_tiff_configured(
 def _tiff_resolution_from_source(
     source: Optional[SourceInfo],
 ) -> tuple[Optional[tuple[float, float]], Optional[str]]:
+    """Convert SourceInfo pixel calibration to baseline TIFF Resolution tags.
+
+    TIFF baseline only allows ``ResolutionUnit`` ∈ {NONE, INCH, CENTIMETER}.
+    Sub-cm units (μm, mm) are converted to pixels-per-cm so legacy tools
+    that ignore OME-XML still recover the correct physical scale.
+    """
     if source is None or source.pixel_size_xy is None:
         return None, None
     sx, sy = source.pixel_size_xy
@@ -1104,28 +1117,72 @@ def _tiff_resolution_from_source(
         return None, None
     unit = (source.unit or "").lower()
     if unit in ("um", "micron", "µm", "micrometer", "micrometre"):
-        # resolution is pixels per unit; tifffile expects (xres, yres)
-        return (1.0 / float(sx), 1.0 / float(sy)), "CENTIMETER" if False else "NONE"
-    if unit in ("cm", "centimeter"):
+        # 1 cm = 10000 µm; pixels-per-cm = 10000 / pixel_size_µm
+        return (10000.0 / float(sx), 10000.0 / float(sy)), "CENTIMETER"
+    if unit in ("mm", "millimeter", "millimetre"):
+        return (10.0 / float(sx), 10.0 / float(sy)), "CENTIMETER"
+    if unit in ("cm", "centimeter", "centimetre"):
         return (1.0 / float(sx), 1.0 / float(sy)), "CENTIMETER"
-    if unit in ("inch",):
+    if unit in ("inch", "in"):
         return (1.0 / float(sx), 1.0 / float(sy)), "INCH"
     return (1.0 / float(sx), 1.0 / float(sy)), "NONE"
+
+
+def _normalize_ome_unit(unit: Optional[str]) -> Optional[str]:
+    """Map free-form unit strings to OME's preferred symbols (µm, mm, ...)."""
+    if not unit:
+        return None
+    low = unit.lower()
+    if low in ("um", "micron", "µm", "micrometer", "micrometre"):
+        return "µm"
+    if low in ("mm", "millimeter", "millimetre"):
+        return "mm"
+    if low in ("cm", "centimeter", "centimetre"):
+        return "cm"
+    if low in ("nm", "nanometer", "nanometre"):
+        return "nm"
+    if low in ("inch", "in"):
+        return "in"
+    if low in ("m", "meter", "metre"):
+        return "m"
+    return unit
+
+
+def _sanitize_channel_names(
+    names: Optional[Sequence[str]],
+    count: int,
+) -> Optional[list[str]]:
+    """Make channel names safe for tools that mis-parse colons / control chars."""
+    if not names:
+        return None
+    out: list[str] = []
+    for raw in list(names)[:count]:
+        text = str(raw)
+        # Some Bio-Formats versions split on ':' when constructing channel
+        # IDs, which corrupts compound names like ``reference:DAPI``.
+        cleaned = text.replace(":", "_").strip()
+        out.append(cleaned or f"channel_{len(out)}")
+    while len(out) < count:
+        out.append(f"channel_{len(out)}")
+    return out
 
 
 def _build_ome_metadata(
     source: Optional[SourceInfo],
     channel_names: Optional[tuple[str, ...]],
     channel_count: int,
+    *,
+    axes: Optional[str] = None,
 ) -> dict:
-    md: dict = {"axes": "CYX" if channel_count > 1 else "YX"}
+    md: dict = {"axes": axes or ("CYX" if channel_count > 1 else "YX")}
     if source is not None and source.pixel_size_xy is not None:
         sx, sy = source.pixel_size_xy
+        ome_unit = _normalize_ome_unit(source.unit)
         md["PhysicalSizeX"] = float(sx)
         md["PhysicalSizeY"] = float(sy)
-        if source.unit:
-            md["PhysicalSizeXUnit"] = source.unit
-            md["PhysicalSizeYUnit"] = source.unit
+        if ome_unit:
+            md["PhysicalSizeXUnit"] = ome_unit
+            md["PhysicalSizeYUnit"] = ome_unit
         if source.origin_xy is not None:
             ox, oy = source.origin_xy
             if channel_count > 1:
@@ -1138,16 +1195,17 @@ def _build_ome_metadata(
                     "PositionX": float(ox),
                     "PositionY": float(oy),
                 }
-            if source.unit:
+            if ome_unit:
                 if channel_count > 1:
-                    plane["PositionXUnit"] = [source.unit] * int(channel_count)
-                    plane["PositionYUnit"] = [source.unit] * int(channel_count)
+                    plane["PositionXUnit"] = [ome_unit] * int(channel_count)
+                    plane["PositionYUnit"] = [ome_unit] * int(channel_count)
                 else:
-                    plane["PositionXUnit"] = source.unit
-                    plane["PositionYUnit"] = source.unit
+                    plane["PositionXUnit"] = ome_unit
+                    plane["PositionYUnit"] = ome_unit
             md["Plane"] = plane
-    if channel_names:
-        md["Channel"] = {"Name": list(channel_names[:channel_count])}
+    cleaned_names = _sanitize_channel_names(channel_names, channel_count)
+    if cleaned_names:
+        md["Channel"] = {"Name": cleaned_names}
     return md
 
 

@@ -1,3 +1,4 @@
+"""High-level builders that compose preprocessing, search, and product pipelines."""
 from batchmatch.registration.builders import (
     build_preprocessing_pipeline,
     build_search_params,

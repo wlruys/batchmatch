@@ -116,7 +116,6 @@ try:
         "reduce_top_k",
         "allreduce_top_k",
         "reduce_top_k_gpu",
-        "reduce_top_k_gpu",
         "allreduce_top_k_gpu",
         "is_cuda_aware_mpi",
         "MPIExhaustiveWarpSearch",

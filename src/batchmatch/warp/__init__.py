@@ -1,3 +1,4 @@
+"""Affine warp specifications, stages, and resampling pipelines."""
 from __future__ import annotations
 from batchmatch.base.tensordicts import WarpParams
 from batchmatch.warp.specs import (

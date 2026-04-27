@@ -16,8 +16,6 @@ import argparse
 import time
 from pathlib import Path
 
-import torch
-
 from batchmatch import auto_device
 from batchmatch.gradient import (
     CDGradientConfig,
@@ -25,7 +23,11 @@ from batchmatch.gradient import (
     L2NormConfig,
     NormalizeConfig,
 )
-from batchmatch.io import ImageIO, ProductIO, SourceInfo, load_image
+from batchmatch.io import (
+    ProductIO,
+    export_stacked_registered_tiff as export_stacked_registered_tiff_core,
+    load_image,
+)
 from batchmatch.io.space import SpatialImage
 from batchmatch.process.cells import CellSizeCfg
 from batchmatch.process.pad import CenterPad
@@ -51,7 +53,6 @@ from batchmatch.view.config import CheckerboardSpec, EdgeOverlaySpec, OverlaySpe
 from batchmatch.view.composite import render_checkerboard, render_overlay
 from batchmatch.view.display import show_comparison
 from batchmatch.view.preview import render_registration_preview
-from batchmatch.warp.resample import warp_to_reference
 
 
 def _parse_image_from_selection(selection: int) -> tuple[Path, Path]:
@@ -71,7 +72,39 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--output-prefix", type=str, default="reg_cells")
     parser.add_argument("--show", action="store_true")
     parser.add_argument("--no-export", action="store_true", help="Skip full-res export.")
-    parser.add_argument("--export-name", type=str, default="registered_fullres.tif")
+    parser.add_argument("--export-name", type=str, default="registered_fullres.ome.tif")
+    parser.add_argument(
+        "--export-canvas",
+        choices=("union", "reference"),
+        default="union",
+        help="Canvas for the full-resolution stacked export.",
+    )
+    parser.add_argument(
+        "--tile-size",
+        type=int,
+        default=None,
+        help=(
+            "Optional output tile size for full-resolution TIFF export. "
+            "Streaming export defaults to 512 and rounds to a multiple of 16."
+        ),
+    )
+    parser.add_argument(
+        "--pyramid-levels",
+        type=int,
+        default=4,
+        help="Number of 2x OME-TIFF SubIFD pyramid levels for exported TIFFs.",
+    )
+    parser.add_argument(
+        "--eager-export",
+        action="store_true",
+        help="Disable streamed tile/channel TIFF export and use the legacy eager path.",
+    )
+    parser.add_argument(
+        "--export-compression",
+        type=str,
+        default=None,
+        help="Optional lossless tifffile compression codec, e.g. zlib or zstd.",
+    )
     return parser.parse_args()
 
 
@@ -85,71 +118,33 @@ def _str_to_translation_config(metric: str):
     raise ValueError(f"Unsupported metric: {metric}")
 
 
-def _prefixed_channel_names(source: SourceInfo, count: int, prefix: str) -> tuple[str, ...]:
-    names = list(source.channel_names)
-    if len(names) < count:
-        names.extend(f"channel_{i}" for i in range(len(names), count))
-    return tuple(f"{prefix}:{name or f'channel_{i}'}" for i, name in enumerate(names[:count]))
-
-
-def _stacked_source(
-    *,
-    path: Path,
-    reference: SourceInfo,
-    moving: SourceInfo,
-    ref_channels: int,
-    mov_channels: int,
-    out_hw: tuple[int, int],
-) -> SourceInfo:
-    return SourceInfo(
-        source_path=str(path),
-        series_index=0,
-        level_count=1,
-        level_shapes=((int(out_hw[0]), int(out_hw[1])),),
-        axes="CYX",
-        dtype="float32",
-        channel_names=(
-            _prefixed_channel_names(reference, ref_channels, "reference")
-            + _prefixed_channel_names(moving, mov_channels, "moving")
-        ),
-        pixel_size_xy=reference.pixel_size_xy,
-        unit=reference.unit,
-        origin_xy=reference.origin_xy,
-        physical_extent_xy=reference.physical_extent_xy,
-        format="ome-tiff",
-    )
-
-
 def export_stacked_registered_tiff(
     transform: RegistrationTransform,
     *,
     moving: SpatialImage,
     reference: SpatialImage,
     output_path: Path,
+    canvas: str = "union",
+    tile_size: int | None = None,
+    pyramid_levels: int = 4,
+    streaming: bool = True,
+    compression: str | None = None,
     overwrite: bool = True,
 ) -> Path:
     """Save reference and registered moving image as prefixed TIFF channels."""
-    warped_moving = warp_to_reference(
-        moving.detail,
-        transform.matrix_ref_full_from_mov_full,
-        out_hw=reference.shape_hw,
-    )
-    stacked = torch.cat([reference.detail.image, warped_moving.image], dim=1)
-    source = _stacked_source(
-        path=output_path,
-        reference=reference.space.source,
-        moving=moving.space.source,
-        ref_channels=int(reference.detail.image.shape[1]),
-        mov_channels=int(warped_moving.image.shape[1]),
-        out_hw=reference.shape_hw,
-    )
-    return ImageIO().save(
-        stacked,
-        output_path,
+    export_stacked_registered_tiff_core(
+        transform,
+        output_path=output_path,
+        reference_path=reference.space.source.path,
+        moving_path=moving.space.source.path,
+        canvas=canvas,  # type: ignore[arg-type]
+        tile_size=tile_size,
+        pyramid_levels=pyramid_levels,
+        streaming=streaming,
         overwrite=overwrite,
-        source=source,
-        channel_names=source.channel_names,
+        compression=compression,
     )
+    return output_path
 
 
 def main() -> None:
@@ -268,6 +263,11 @@ def main() -> None:
             moving=moving.to("cpu"),
             reference=reference.to("cpu"),
             output_path=out_dir / args.export_name,
+            canvas=args.export_canvas,
+            tile_size=args.tile_size,
+            pyramid_levels=args.pyramid_levels,
+            streaming=not args.eager_export,
+            compression=args.export_compression,
             overwrite=True,
         )
         print(f"exported: {export_path}")

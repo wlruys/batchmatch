@@ -1,3 +1,4 @@
+"""Gradient pipelines and normalisation (Sobel, ROEWA, central differences, ...)."""
 from __future__ import annotations
 
 from .base import (

@@ -1,3 +1,10 @@
+"""Gradient-based affine registration via PyTorch autograd.
+
+Experimental: this module is primarily a test of how well torch autograd
+can recover affine parameters. Production registration should use
+:mod:`batchmatch.search`. Future work: regularization and multi-scale
+optimization.
+"""
 from __future__ import annotations
 
 from batchmatch.optimize.config import (
@@ -21,6 +28,3 @@ __all__ = [
     "build_reference_pipeline",
     "build_moving_pipeline",
 ]
-
-#Note(wlr): This is very experimental and incomplete. Its mainly a test of how well torch autograd can recover affine parameters
-#TODO(wlr): Needs more work to be generally useful. Really needs regulairization and multi-scale optimization
