@@ -1,13 +1,4 @@
 """Tile a TIFF image into rectangular tiles based on physical size.
-
-Given a characteristic length in the same spatial units as the image's
-pixel size (e.g. microns), this script divides the full image into
-rectangular tiles of that physical extent.  Each tile is read lazily via
-region-based TIFF loading (no full image in memory), and saved as a
-separate TIFF with metadata recording its position in the original image.
-
-A ``tiles.json`` manifest is written alongside the tile TIFFs.
-
 Run:
     uv run python examples/process/tile_tiff.py
     uv run python examples/process/tile_tiff.py --image path/to/large.tif --tile-size 100 100
@@ -22,9 +13,11 @@ import math
 from pathlib import Path
 
 from batchmatch.io import (
+    PreviewConfig,
     RegionYXHW,
     TiffExportConfig,
     open_image,
+    save_preview,
     save_tiff,
 )
 from batchmatch.io.images import ImagePolicy
@@ -105,6 +98,37 @@ def _parse_args() -> argparse.Namespace:
         default="tile",
         help="Filename prefix for tile TIFFs (default: 'tile').",
     )
+    # --- Preview options --------------------------------------------------
+    parser.add_argument(
+        "--preview",
+        action="store_true",
+        help="Save a PNG preview alongside each tile.",
+    )
+    parser.add_argument(
+        "--preview-normalize",
+        type=str,
+        default="minmax",
+        choices=["minmax", "none", "percentile", "abs"],
+        help="Normalization mode for previews (default: minmax).",
+    )
+    parser.add_argument(
+        "--preview-gamma",
+        type=float,
+        default=1.0,
+        help="Gamma correction for previews (default: 1.0).",
+    )
+    parser.add_argument(
+        "--preview-colormap",
+        type=str,
+        default=None,
+        help="Matplotlib colormap for single-channel previews.",
+    )
+    parser.add_argument(
+        "--preview-max-size",
+        type=int,
+        default=None,
+        help="Cap max(H,W) of preview images.",
+    )
     return parser.parse_args()
 
 
@@ -180,7 +204,6 @@ def _build_tile_source_info(
 def main() -> None:
     args = _parse_args()
 
-    # --- Open and inspect -------------------------------------------------
     src = open_image(args.image)
     source = src.source
     base_h, base_w = source.base_shape_hw
@@ -193,7 +216,6 @@ def main() -> None:
     if source.pixel_size_xy is not None:
         print(f"  pixel_size_xy={source.pixel_size_xy} {source.unit or ''}".rstrip())
 
-    # --- Resolve tile size ------------------------------------------------
     if args.tile_size is not None and args.tile_size_pixels is not None:
         raise ValueError("Specify --tile-size or --tile-size-pixels, not both.")
 
@@ -226,27 +248,32 @@ def main() -> None:
         overlap_w = 0
         print(f"  [default] tile size: {tile_h_px} x {tile_w_px} px (2x2 grid)")
 
-    # --- Compute tile grid ------------------------------------------------
     tiles = _compute_tile_grid(base_h, base_w, tile_h_px, tile_w_px, overlap_h, overlap_w)
     print(f"  tiles: {len(tiles)} ({tile_h_px}x{tile_w_px} px, overlap {overlap_h}x{overlap_w} px)")
 
-    # --- Channel selection ------------------------------------------------
     channels = None
     if args.channel:
         channels = [_parse_channel(c) for c in args.channel]
         print(f"  channels: {channels}")
 
-    # --- Write tiles ------------------------------------------------------
     args.output_dir.mkdir(parents=True, exist_ok=True)
     tiff_config = TiffExportConfig(
         format="ome-tiff",
         photometric="auto",
         overwrite=True,
     )
+    preview_config: PreviewConfig | None = None
+    if args.preview:
+        preview_config = PreviewConfig(
+            normalize=args.preview_normalize,
+            gamma=args.preview_gamma,
+            colormap=args.preview_colormap,
+            max_size=args.preview_max_size,
+            overwrite=True,
+        )
     manifest_tiles: list[dict] = []
 
     for idx, region in enumerate(tiles):
-        # Lazy read: only the requested region is loaded from disk
         spatial_img = src.read(
             region=region,
             downsample=args.downsample,
@@ -257,7 +284,6 @@ def main() -> None:
         tile_name = f"{args.prefix}_{idx:04d}.tif"
         tile_path = args.output_dir / tile_name
 
-        # Build tile-specific source info with adjusted origin
         tile_source = _build_tile_source_info(source, region)
 
         save_tiff(
@@ -267,9 +293,16 @@ def main() -> None:
             source=tile_source,
         )
 
+        preview_name: str | None = None
+        if preview_config is not None:
+            preview_name = f"{args.prefix}_{idx:04d}.png"
+            preview_path = args.output_dir / preview_name
+            save_preview(spatial_img, preview_path, config=preview_config)
+
         tile_entry = {
             "index": idx,
             "filename": tile_name,
+            "preview": preview_name,
             "region_yxhw": region.to_list(),
             "shape_hw": [
                 int(spatial_img.detail.image.shape[-2]),
@@ -289,7 +322,6 @@ def main() -> None:
             f"shape={tile_entry['shape_hw']}"
         )
 
-    # --- Write manifest ---------------------------------------------------
     manifest = {
         "source": {
             "path": str(args.image.resolve()),

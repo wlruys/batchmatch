@@ -37,8 +37,7 @@ class ImageViewSpec:
     #   (i,j,k) -> three channels mapped to (R, G, B)
     channel: Optional[ChannelSelection] = None
 
-    # High-resolution support: downsample for display when max(H,W)
-    # exceeds this limit.  None disables downsampling.
+    # High-resolution support: downsample for display when max(H,W) > max_display_size
     max_display_size: Optional[int] = None
 
 

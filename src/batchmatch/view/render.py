@@ -59,8 +59,16 @@ def normalize_percentile(
     high: float = 98.0,
 ) -> Tensor:
     flat = image.reshape(-1)
-    low_val = torch.quantile(flat, low / 100.0)
-    high_val = torch.quantile(flat, high / 100.0)
+    # torch.quantile has a practical element limit (~2^24); subsample when
+    # the tensor is too large.
+    _MAX_QUANTILE_ELEMS = 2**24
+    if flat.numel() > _MAX_QUANTILE_ELEMS:
+        indices = torch.randint(0, flat.numel(), (_MAX_QUANTILE_ELEMS,), device=flat.device)
+        sample = flat[indices]
+    else:
+        sample = flat
+    low_val = torch.quantile(sample, low / 100.0)
+    high_val = torch.quantile(sample, high / 100.0)
     out = (image - low_val) / (high_val - low_val + 1e-8)
     return out.clamp(0, 1)
 

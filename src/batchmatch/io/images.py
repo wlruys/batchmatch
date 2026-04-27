@@ -60,6 +60,14 @@ from batchmatch.io.utils import (
     ensure_parent_dir,
     pathify,
 )
+from batchmatch.view.render import (
+    apply_colormap,
+    downsample_for_display,
+    prepare_for_display,
+    select_channels,
+    to_rgb,
+    to_uint8 as _render_to_uint8,
+)
 
 Tensor = torch.Tensor
 Channels = Optional[Union[int, str, Sequence[Union[int, str]]]]
@@ -70,6 +78,7 @@ __all__ = [
     "ImageIO",
     "ImagePolicy",
     "ImageSource",
+    "PreviewConfig",
     "RasterSource",
     "SaveOptions",
     "TiffExportConfig",
@@ -77,6 +86,7 @@ __all__ = [
     "load_image",
     "open_image",
     "save_image",
+    "save_preview",
     "save_tiff",
 ]
 
@@ -228,6 +238,54 @@ class TiffExportConfig:
         return None
 
 
+@dataclass(frozen=True)
+class PreviewConfig:
+    """Controls how image data is presented when saving raster previews.
+
+    Applies normalization, gamma correction, channel selection, and
+    optional colormap before converting to uint8 for PNG/JPEG output.
+
+    Parameters
+    ----------
+    normalize : str
+        Normalization mode applied before gamma.  One of ``"minmax"``
+        (default), ``"none"``, ``"percentile"``, or ``"abs"``.
+    percentile_low, percentile_high : float
+        Percentile bounds when ``normalize="percentile"``.
+    vmin, vmax : float or None
+        Explicit intensity bounds.  When both are set they override
+        the *normalize* mode.
+    gamma : float
+        Display gamma (applied as ``x ** (1/gamma)``).  Values > 1
+        brighten dark regions; < 1 increases contrast.
+    colormap : str or None
+        Matplotlib colormap name for single-channel images.  ``None``
+        (default) uses identity mapping / grayscale expansion.
+    channel : int, tuple of int, or None
+        Channel selection before rendering.  ``None`` keeps auto
+        behaviour (≤3 channels pass through, >3 takes first).
+    quality : int
+        JPEG quality (1–100).  Ignored for PNG.
+    overwrite : bool
+        Allow overwriting an existing file.
+    max_size : int or None
+        Cap ``max(H, W)`` to this value using area interpolation.
+        ``None`` keeps the original resolution.
+    """
+
+    normalize: Literal["minmax", "none", "percentile", "abs"] = "minmax"
+    percentile_low: float = 2.0
+    percentile_high: float = 98.0
+    vmin: Optional[float] = None
+    vmax: Optional[float] = None
+    gamma: float = 1.0
+    colormap: Optional[str] = None
+    channel: Optional[Union[int, tuple[int, ...]]] = None
+    quality: int = 95
+    overwrite: bool = False
+    max_size: Optional[int] = None
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -275,7 +333,7 @@ def _source_info_from_tiff(
 ) -> SourceInfo:
     level_shapes = _tiff_level_shapes(tif, meta.axes)
     base_h, base_w = level_shapes[0] if level_shapes else _axes_hw(meta.axes, meta.shape)
-    origin_xy = (0.0, 0.0) if meta.pixel_size_xy is not None else None
+    origin_xy = meta.origin_xy or ((0.0, 0.0) if meta.pixel_size_xy is not None else None)
     phys_extent = None
     if meta.pixel_size_xy is not None:
         phys_extent = (base_w * meta.pixel_size_xy[0], base_h * meta.pixel_size_xy[1])
@@ -745,6 +803,49 @@ class ImageIO:
         _write_tiff_configured(chw, p, cfg, source=source)
         return p
 
+    def save_preview(
+        self,
+        image: Union[Tensor, SpatialImage, object],
+        path: PathLike,
+        *,
+        config: Optional[PreviewConfig] = None,
+    ) -> pathlib.Path:
+        """Save a raster preview with presentation adjustments.
+
+        Applies normalization, gamma, optional colormap, and channel
+        selection before writing a PNG/JPEG/BMP file.
+
+        Parameters
+        ----------
+        image
+            Tensor, SpatialImage, or any image container.
+        path
+            Output file path (PNG, JPEG, or BMP extension).
+        config
+            Preview settings.  Defaults to :class:`PreviewConfig` with
+            min-max normalisation and gamma 1.0.
+        """
+        cfg = config if config is not None else PreviewConfig()
+
+        p = pathify(path)
+        suffix = p.suffix.lower()
+        if suffix not in _RASTER_EXTENSIONS:
+            raise ValueError(
+                f"save_preview() requires a raster path (.png/.jpg/.bmp), got {suffix!r}."
+            )
+        ensure_parent_dir(p)
+        assert_overwrite(p, cfg.overwrite)
+
+        img = to_bchw(_coerce_tensor(image)).detach()
+        if img.shape[0] != 1:
+            raise ValueError(
+                f"save_preview() requires batch size 1, got shape {tuple(img.shape)}."
+            )
+        chw = img[0].contiguous().cpu()
+
+        _write_preview(chw, p, suffix, cfg)
+        return p
+
     def list(
         self,
         directory: PathLike,
@@ -821,6 +922,19 @@ def save_tiff(
     Convenience wrapper around ``ImageIO().save_tiff(...)``.
     """
     return ImageIO().save_tiff(image, path, config=config, source=source)
+
+
+def save_preview(
+    image: Union[Tensor, SpatialImage, object],
+    path: PathLike,
+    *,
+    config: Optional[PreviewConfig] = None,
+) -> pathlib.Path:
+    """Save a raster preview with presentation adjustments.
+
+    Convenience wrapper around ``ImageIO().save_preview(...)``.
+    """
+    return ImageIO().save_preview(image, path, config=config)
 
 
 # ---------------------------------------------------------------------------
@@ -1012,6 +1126,26 @@ def _build_ome_metadata(
         if source.unit:
             md["PhysicalSizeXUnit"] = source.unit
             md["PhysicalSizeYUnit"] = source.unit
+        if source.origin_xy is not None:
+            ox, oy = source.origin_xy
+            if channel_count > 1:
+                plane: dict[str, object] = {
+                    "PositionX": [float(ox)] * int(channel_count),
+                    "PositionY": [float(oy)] * int(channel_count),
+                }
+            else:
+                plane = {
+                    "PositionX": float(ox),
+                    "PositionY": float(oy),
+                }
+            if source.unit:
+                if channel_count > 1:
+                    plane["PositionXUnit"] = [source.unit] * int(channel_count)
+                    plane["PositionYUnit"] = [source.unit] * int(channel_count)
+                else:
+                    plane["PositionXUnit"] = source.unit
+                    plane["PositionYUnit"] = source.unit
+            md["Plane"] = plane
     if channel_names:
         md["Channel"] = {"Name": list(channel_names[:channel_count])}
     return md
@@ -1047,6 +1181,55 @@ def _write_raster(chw: Tensor, path: pathlib.Path, suffix: str, opts: SaveOption
     arr = img[0].numpy() if c == 1 else img.permute(1, 2, 0).numpy()
     pil = Image.fromarray(arr)
     pil.save(path, **({"quality": int(opts.quality)} if suffix in _JPEG_EXTENSIONS else {}))
+
+
+def _write_preview(
+    chw: Tensor,
+    path: pathlib.Path,
+    suffix: str,
+    cfg: PreviewConfig,
+) -> None:
+    """Apply a presentation pipeline and save as a raster preview.
+
+    Pipeline: channel selection → downsample → normalize + gamma →
+    colormap / RGB conversion → uint8 → PIL save.
+    """
+    img = chw.float() if not chw.dtype.is_floating_point else chw
+
+    # 1. Channel selection
+    img = select_channels(img, cfg.channel)
+
+    # 2. Downsample
+    img = downsample_for_display(img, cfg.max_size)
+
+    # 3. Normalize + gamma
+    img = prepare_for_display(
+        img,
+        mode=cfg.normalize,
+        percentile_low=cfg.percentile_low,
+        percentile_high=cfg.percentile_high,
+        vmin=cfg.vmin,
+        vmax=cfg.vmax,
+        gamma=cfg.gamma,
+    )
+
+    # 4. Colormap or RGB expansion
+    c = int(img.shape[0])
+    if cfg.colormap is not None and c == 1:
+        img = apply_colormap(img, cfg.colormap)
+    else:
+        img = to_rgb(img)
+
+    # 5. Convert to uint8
+    img = _render_to_uint8(img)
+
+    # 6. PIL save
+    arr = img.permute(1, 2, 0).numpy()
+    pil = Image.fromarray(arr)
+    save_kwargs: dict = {}
+    if suffix in _JPEG_EXTENSIONS:
+        save_kwargs["quality"] = int(cfg.quality)
+    pil.save(path, **save_kwargs)
 
 
 def _to_uint8_chw(image: Tensor) -> Tensor:

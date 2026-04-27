@@ -9,6 +9,7 @@ from batchmatch.io.images import (
     ImageIO,
     ImagePolicy,
     ImageSource,
+    PreviewConfig,
     RasterSource,
     SaveOptions,
     TiffExportConfig,
@@ -16,6 +17,7 @@ from batchmatch.io.images import (
     load_image,
     open_image,
     save_image,
+    save_preview,
     save_tiff,
 )
 from batchmatch.io.space import (
@@ -27,7 +29,7 @@ from batchmatch.io.space import (
     SpatialImage,
 )
 from batchmatch.io.product import ProductIO
-from batchmatch.io.export import export_registered
+from batchmatch.io.export import RegisteredExport, export_registered
 from batchmatch.io.tensors import TensorIO
 
 __all__ = [
@@ -39,12 +41,14 @@ __all__ = [
     "ImagePolicy",
     "ImageSource",
     "RasterSource",
+    "PreviewConfig",
     "SaveOptions",
     "TiffExportConfig",
     "TiffSource",
     "load_image",
     "open_image",
     "save_image",
+    "save_preview",
     "save_tiff",
     # Tensor I/O
     "TensorIO",
@@ -58,6 +62,7 @@ __all__ = [
     # Detail / product I/O
     "ImageDetailIO",
     "ProductIO",
+    "RegisteredExport",
     "export_registered",
     # Spatial types
     "ImageSpace",

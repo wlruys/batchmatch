@@ -25,6 +25,7 @@ class TiffMeta:
     channel_names: list[str]
     pixel_size_xy: tuple[float, float] | None = None
     unit: str | None = None
+    origin_xy: tuple[float, float] | None = None
     original_dtype: str = ""
     num_pyramid_levels: int = 1
     extra: dict = field(default_factory=dict)
@@ -156,6 +157,7 @@ def _parse_imagej_meta(tif: tifffile.TiffFile) -> TiffMeta:
         channel_names=channel_names,
         pixel_size_xy=pixel_size_xy,
         unit=unit,
+        origin_xy=None,
         original_dtype=str(series.dtype),
         num_pyramid_levels=_count_pyramid_levels(tif),
     )
@@ -178,6 +180,7 @@ def _parse_ome_meta(tif: tifffile.TiffFile) -> TiffMeta:
 
     pixel_size_xy = None
     unit = None
+    origin_xy = None
     if pixels is not None:
         px = pixels.get("PhysicalSizeX")
         py = pixels.get("PhysicalSizeY")
@@ -189,6 +192,14 @@ def _parse_ome_meta(tif: tifffile.TiffFile) -> TiffMeta:
             if px_val > 0 and py_val > 0 and ux in _UM_ALIASES and uy in _UM_ALIASES:
                 pixel_size_xy = (px_val, py_val)
                 unit = "um"
+        plane = pixels.find("ome:Plane", ns)
+        if plane is not None:
+            ox = plane.get("PositionX")
+            oy = plane.get("PositionY")
+            ux = plane.get("PositionXUnit", "")
+            uy = plane.get("PositionYUnit", "")
+            if ox is not None and oy is not None and ux in _UM_ALIASES and uy in _UM_ALIASES:
+                origin_xy = (float(ox), float(oy))
 
     return TiffMeta(
         axes=series.axes,
@@ -196,6 +207,7 @@ def _parse_ome_meta(tif: tifffile.TiffFile) -> TiffMeta:
         channel_names=channel_names,
         pixel_size_xy=pixel_size_xy,
         unit=unit,
+        origin_xy=origin_xy,
         original_dtype=str(series.dtype),
         num_pyramid_levels=_count_pyramid_levels(tif),
     )

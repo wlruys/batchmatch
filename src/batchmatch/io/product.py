@@ -1,37 +1,3 @@
-"""Canonical registration manifest + slim :class:`ProductIO`.
-
-``registration.json`` v3 is the single source of truth.  The manifest
-stores each source **once**, the three characteristic matrices of
-:class:`RegistrationTransform`, and a compact search summary with no
-duplication.
-
-Manifest layout (v3)::
-
-    {
-      "schema": "batchmatch.registration",
-      "version": 3,
-      "sources": {
-        "moving":    { <SourceInfo — OME-first> },
-        "reference": { <SourceInfo — OME-first> }
-      },
-      "transform": {
-        "matrices": {
-          "ref_full_from_mov_full":    [[3×3]],
-          "ref_phys_from_mov_phys":    [[3×3]] | null,
-          "ref_search_from_mov_search": [[3×3]]
-        },
-        "search_spaces": {
-          "moving":    { pyramid_level, region_yxhw, … },
-          "reference": { … }
-        },
-        "search_summary": { … }
-      },
-      "artifacts": { … }
-    }
-
-Export is handled by :func:`batchmatch.io.export.export_registered`.
-"""
-
 from __future__ import annotations
 
 import json
@@ -94,10 +60,6 @@ class ProductIO:
     def manifest_path(self) -> pathlib.Path:
         return self.root / self.manifest_name
 
-    # ------------------------------------------------------------------
-    # Save
-    # ------------------------------------------------------------------
-
     def save(
         self,
         transform: "RegistrationTransform",
@@ -106,6 +68,7 @@ class ProductIO:
         checkerboard: Optional[Tensor] = None,
         overlay: Optional[Tensor] = None,
         debug_details: Optional[dict[str, ImageDetail | SpatialImage]] = None,
+        extra_artifacts: Optional[dict[str, Any]] = None,
         overwrite: bool = False,
     ) -> pathlib.Path:
         ensure_dir(self.root)
@@ -144,6 +107,9 @@ class ProductIO:
                 det_paths[name] = dpath.name
             artifacts["debug_details"] = det_paths
 
+        if extra_artifacts:
+            artifacts.update(extra_artifacts)
+
         manifest = REGISTRATION_SCHEMA.envelope(
             {
                 "sources": {
@@ -157,10 +123,6 @@ class ProductIO:
 
         _write_json(self.manifest_path, manifest, overwrite=overwrite)
         return self.manifest_path
-
-    # ------------------------------------------------------------------
-    # Load
-    # ------------------------------------------------------------------
 
     def load_manifest(self) -> dict[str, Any]:
         raw = _read_json(self.manifest_path)

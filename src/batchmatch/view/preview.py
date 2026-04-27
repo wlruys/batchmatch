@@ -132,22 +132,6 @@ def render_registration_preview(
     tile_size: Optional[int] = None,
     channel: Optional[ChannelSelection] = None,
 ) -> RegistrationPreview:
-    """Warp ``moving`` onto ``reference`` using the transform and return
-    a ``RegistrationPreview``.
-
-    ``crop_mode`` and ``preview_size`` are purely display-side and never
-    feed back into transform estimation.
-
-    For OME-TIFF or other multi-channel images, *channel* selects which
-    channel(s) to include in the preview output (``int`` for a single
-    channel, ``tuple[int, ...]`` for an explicit RGB mapping, ``None`` for
-    auto-selection at render time).  Selecting a subset early reduces peak
-    memory usage when working with images larger than 20 k × 20 k pixels.
-
-    For very large images the warp is performed at native resolution.  Use
-    *preview_size* to downsample the output before returning, or leave it
-    as ``None`` when native resolution is required.
-    """
     ref_h, ref_w = reference.shape_hw
     mov_h, mov_w = moving.shape_hw
 
@@ -172,9 +156,6 @@ def render_registration_preview(
         ref_img = _crop_or_pad_to_ref(ref_img, crop_box, (ref_h, ref_w))
         mov_img = _crop_or_pad_to_ref(mov_img, crop_box, (ref_h, ref_w))
 
-    # Channel selection: narrow to the requested channel(s) to reduce memory
-    # usage before any further downsampling, especially important for
-    # OME-TIFF images with many modality channels.
     if channel is not None:
         if isinstance(channel, int):
             ref_img = ref_img[:, channel : channel + 1]

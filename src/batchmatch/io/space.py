@@ -1,21 +1,3 @@
-"""Canonical spatial types.
-
-These are the only public representations of regions, padding, source
-metadata, and image-to-source geometry in the codebase:
-
-- :class:`RegionYXHW` — the one region representation (y, x, h, w).
-- :class:`PaddingLTRB` — the one padding representation (left, top, right,
-  bottom).
-- :class:`SourceInfo` — immutable description of a source file.
-- :class:`ImageSpace` — the exact, self-contained record of how a tensor
-  maps back to its source file via a 3x3 ``matrix_image_from_source``.
-- :class:`SpatialImage` — ``(detail, space)`` pair flowing through the
-  pipeline.
-
-Everything is a frozen dataclass. Provenance is derived from these serialized
-values and from explicit matrices; there are no mutable frame-id chains.
-"""
-
 from __future__ import annotations
 
 from dataclasses import dataclass, field, replace
@@ -257,11 +239,6 @@ class SourceInfo:
         )
 
 
-# ---------------------------------------------------------------------------
-# Image space
-# ---------------------------------------------------------------------------
-
-
 @dataclass(frozen=True)
 class ImageSpace:
     """Exact mapping from source pixels to the current tensor's pixels.
@@ -406,11 +383,6 @@ class ImageSpace:
                 else None
             ),
         )
-
-
-# ---------------------------------------------------------------------------
-# Spatial image
-# ---------------------------------------------------------------------------
 
 
 @dataclass(frozen=True)
